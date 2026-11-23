@@ -1,5 +1,7 @@
 # Estado y pendientes (23 nov 2026)
 
+> Si usas Claude: abre este repo y dile *"lee CLAUDE.md, HISTORIAL.md y PENDIENTES.md y sigamos con el pendiente 1"*.
+
 ## Lo que ya funciona
 - `BrazoUno.ino` sube y responde en el Monitor Serie (115200, "Nueva línea"): `?`, `P`, `T`, `J`, `HOME`...
 - Los potes se leen bien **con la fuente encendida** (sin fuente dan lecturas falsas).
