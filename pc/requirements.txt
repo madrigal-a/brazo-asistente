@@ -1,0 +1,8 @@
+numpy
+scipy
+sounddevice
+soundfile
+pyserial
+matplotlib
+numba        # opcional: acelera el filtro de Kalman ~50x
+# vosk       # opcional: reconocer palabras en español sin internet
