@@ -123,7 +123,8 @@ Al arrancar debe sonar un *pío* y la bolita sonríe.
 | `ESTIRA` | brazo estirado |
 | `MAN` | regresar a potenciómetros |
 | `?` | estado |
-| `P` | ángulos del control (para calibrar) |
+| `P` | ángulos del control + ADC crudo (para calibrar) |
+| `T 14 60` | prueba: mueve solo ese canal del PCA9685 (salir con `MAN`) |
 
 **Al encender**, el brazo va a la posición de **casa** (recogido) y se queda ahí. Esa es su
 referencia: los servos no avisan en qué ángulo están, así que el programa siempre parte de una
@@ -132,8 +133,8 @@ En cuanto mueves el control (el bracito de potenciómetros) más de 20°, el bra
 copiar, primero despacio hasta alcanzarlo. Si llega una orden de la ESP, obedece a la ESP.
 
 **Calibración (para el reporte):**
-1. Con la fuente de los servos **apagada** (Uno solo por USB), pon el control en la pose recogida,
-   escribe `P` en el Monitor Serie y copia los 4 ángulos que responde (`P base hombro codo muñeca`)
+1. Con la fuente **encendida** (los potes toman de ahí su voltaje) y los servos desconectados de
+   la placa azul, pon el control en la pose recogida, escribe `P` en el Monitor Serie y copia los 4 ángulos que responde (`P base hombro codo muñeca`)
    en `HOME_POS`.
 2. Haz lo mismo con el brazo estirado → `STRETCH_POS`.
 3. Mueve cada articulación a sus extremos sin que choque y anota los ángulos en `LIM_MIN` / `LIM_MAX`.
