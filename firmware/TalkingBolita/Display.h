@@ -1,4 +1,4 @@
-// Configuración de LovyanGFX para la pantalla ST7789 de 2.4" (240x320)
+// Configuración de LovyanGFX para la pantalla ST7789 de 2.4" (240x320), sin touch
 #pragma once
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -8,7 +8,6 @@ class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ST7789 _panel;
   lgfx::Bus_SPI      _bus;
   lgfx::Light_PWM    _light;
-  lgfx::Touch_XPT2046 _touch;
 
  public:
   LGFX() {
@@ -42,7 +41,7 @@ class LGFX : public lgfx::LGFX_Device {
       cfg.invert     = TFT_INVERT;
       cfg.rgb_order  = TFT_RGB_ORDER;
       cfg.dlen_16bit = false;
-      cfg.bus_shared = true;  // el touch usa el mismo bus SPI
+      cfg.bus_shared = false;  // sin touch: la pantalla tiene el bus SPI para ella sola
       _panel.config(cfg);
     }
     {
@@ -53,22 +52,6 @@ class LGFX : public lgfx::LGFX_Device {
       cfg.pwm_channel = 7;
       _light.config(cfg);
       _panel.setLight(&_light);
-    }
-    {
-      auto cfg = _touch.config();
-      cfg.x_min = 300;  cfg.x_max = 3900;   // valores iniciales; la calibración los corrige
-      cfg.y_min = 200;  cfg.y_max = 3800;
-      cfg.pin_int = PIN_TOUCH_IRQ;
-      cfg.bus_shared = true;
-      cfg.offset_rotation = 0;
-      cfg.spi_host = SPI2_HOST;
-      cfg.freq = 1000000;
-      cfg.pin_sclk = PIN_TFT_SCK;
-      cfg.pin_mosi = PIN_TFT_MOSI;
-      cfg.pin_miso = PIN_TFT_MISO;
-      cfg.pin_cs   = PIN_TOUCH_CS;
-      _touch.config(cfg);
-      _panel.setTouch(&_touch);
     }
     setPanel(&_panel);
   }

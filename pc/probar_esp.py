@@ -1,9 +1,11 @@
 """
 Prueba del hardware sin micrófono: recorre todas las caras, mueve los ojos,
-suena una melodía por la bocina y (opcional) prueba las rutinas del brazo.
+suena una melodía (bocina de la ESP32; --audio pc = en la compu, --audio ambos = las dos) y (opcional)
+prueba los gestos sencillos del brazo (comando T, ver gestos.py).
 
     python probar_esp.py
     python probar_esp.py --port COM5 --brazo
+    python probar_esp.py --audio ambos      # suena en la ESP32 y en la compu
 """
 import argparse
 import time
@@ -11,6 +13,7 @@ import time
 import numpy as np
 
 from bolita import MOOD_NAMES, NEUTRAL, Bolita
+from gestos import Gestos
 
 
 def melody():
@@ -26,11 +29,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port")
     ap.add_argument("--brazo", action="store_true")
+    ap.add_argument("--audio", default="esp", choices=["esp", "pc", "ambos"])
     args = ap.parse_args()
 
-    b = Bolita(args.port, on_line=lambda l: print("  esp32>", l))
+    b = Bolita(args.port, on_line=lambda l: print("  esp32>", l), audio=args.audio)
     print("Conectado a", b.port)
     b.ping()
+    b.volume(130)
     time.sleep(0.3)
 
     for m, name in enumerate(MOOD_NAMES):
@@ -49,10 +54,10 @@ def main():
     b.wait_done(secs + 2)
 
     if args.brazo:
-        for r, secs in (("inicio", 2), ("si", 2), ("no", 2), ("saludo", 5), ("inicio", 2)):
-            print("Brazo:", r)
-            b.arm(r)
-            time.sleep(secs)
+        g = Gestos(b.arm)
+        for r in ("si", "no", "saludo"):
+            g.hacer(r, esperar=True)
+            time.sleep(1)
 
     print("Listo. Presiona los botones o la pantalla para ver sus mensajes (Ctrl+C para salir).")
     try:

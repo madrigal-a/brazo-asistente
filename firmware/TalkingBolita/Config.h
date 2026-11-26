@@ -7,9 +7,9 @@
 #pragma once
 
 // ---------- Pantalla TFT 2.4" ST7789 (SPI) ----------
-#define PIN_TFT_SCK   12   // SCK / SCL        (también T_CLK del touch)
-#define PIN_TFT_MOSI  11   // SDI / SDA / MOSI (también T_DIN del touch)
-#define PIN_TFT_MISO  13   // SDO / MISO       (también T_DO del touch)
+#define PIN_TFT_SCK   12   // SCK / SCL
+#define PIN_TFT_MOSI  11   // SDI / SDA / MOSI
+#define PIN_TFT_MISO  13   // SDO / MISO
 #define PIN_TFT_CS    10   // CS
 #define PIN_TFT_DC     9   // DC / RS
 #define PIN_TFT_RST   14   // RESET / RST
@@ -21,9 +21,9 @@
 #define TFT_RGB_ORDER  false
 #define TFT_SPI_HZ     40000000
 
-// ---------- Touch resistivo XPT2046 (comparte SCK/MOSI/MISO con la pantalla) ----------
-#define PIN_TOUCH_CS   8   // T_CS
-#define PIN_TOUCH_IRQ  7   // T_IRQ (opcional, -1 si no lo conectas)
+// ---------- Touch ----------
+// Nuestra pantalla NO trae el chip del touch (U1 vacío atrás): se controla con 2 botones.
+// Los cables T_CLK, T_CS, T_DIN, T_DO y T_IRQ de la pantalla no se conectan.
 
 // ---------- Amplificador MAX98357 (I2S) ----------
 #define PIN_I2S_BCLK   4   // BCLK
@@ -32,9 +32,9 @@
 #define AUDIO_RATE  16000
 
 // ---------- Botones (a GND, usan pull-up interno) ----------
-#define PIN_BTN1  15   // cambiar pantalla: cara <-> control del brazo
-#define PIN_BTN2  16   // brazo a INICIO y detener rutina (paro)
-// Mantén el botón 2 presionado al encender para recalibrar el touch.
+#define PIN_BTN_FUNC  15   // FUNCTION: mantener = hablar · en el menú: elegir
+#define PIN_BTN_MODE  16   // MODE: abrir menú / siguiente · mantener = salir
+// Los dos a la vez = PARO del brazo.
 
 // ---------- Arduino Uno del brazo (UART) ----------
 #define PIN_ARM_TX  40   // -> pin 0 (RX) del Uno, directo
@@ -42,7 +42,7 @@
 #define ARM_BAUD    115200
 
 // ---------- Comunicación con la computadora ----------
-#define SERIAL_BAUD  921600
+#define SERIAL_BAUD  460800   // con 921600 se perdían bytes (ERR checksum); el audio solo necesita ~33 KB/s
 
 // Segundos sin actividad para que la bolita se duerma sola
 #define SLEEP_AFTER_S  60

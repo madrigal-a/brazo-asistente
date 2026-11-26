@@ -5,7 +5,8 @@
 //   MANUAL  : el control (bracito con 4 potenciómetros) mueve el brazo y el
 //             botón cierra la mano (igual que el código original).
 //   REMOTO  : la ESP32-S3 manda órdenes por serial (pines 0/1, 115200).
-//             Si mueves un potenciómetro más de 20°, regresa solo a MANUAL.
+//             Mientras la ESP esté conectada, los potenciómetros y el botón NO hacen nada.
+//             Sin ESP (2 s sin recibir nada), mover un pote más de 20° regresa a MANUAL.
 //
 //  También puedes probar el modo remoto desde el Monitor Serie (115200,
 //  "Nueva línea") escribiendo los comandos de abajo.
@@ -65,6 +66,12 @@ bool remote = false;
 bool catchUp = false;   // al pasar a manual, alcanza al control despacio
 bool testMode = false;  // comando T: no mover nada más
 
+// Mientras la ESP esté conectada (manda "?" cada 300 ms), el control de potenciómetros y su
+// botón quedan BLOQUEADOS: solo obedece a la ESP. Si pasan ESP_TIMEOUT_MS sin recibir nada
+// (ESP desconectada o apagada), el control vuelve a funcionar (mueve un pote >20° para tomarlo).
+const uint32_t ESP_TIMEOUT_MS = 2000;
+uint32_t lastRx = 0;
+
 // ----- Filtro de Kalman 1D para cada potenciómetro (quita el temblor de los servos) -----
 // Modelo: el ángulo es casi constante (x[k] = x[k-1] + w), la lectura del ADC tiene ruido (z = x + v)
 struct Kalman1D { float x, p; };
@@ -96,6 +103,10 @@ uint16_t jointCounts(int j, float a) { return angleToCounts(INVERT[j] ? 180 - a 
 
 float clampJoint(int j, float a) { return constrain(a, LIM_MIN[j], LIM_MAX[j]); }
 
+// (va aquí abajo y no junto a lastRx: el IDE declara las funciones antes de la primera,
+//  y si quedara arriba de struct Kalman1D, kalmanStep no compila)
+bool espConectada() { return lastRx != 0 && millis() - lastRx < ESP_TIMEOUT_MS; }
+
 void enterRemote() {
   if (!remote) {
     for (int j = 0; j < NJ; j++) potRef[j] = potA[j];
@@ -115,6 +126,7 @@ char line[48];
 uint8_t lineLen = 0;
 
 void handleLine(char* s) {
+  lastRx = millis();  // llegó algo de la ESP (o del Monitor Serie): control bloqueado
   if (s[0] == 'T') {
     int c, a;
     if (sscanf(s + 1, "%d %d", &c, &a) == 2 && c >= 0 && c <= 15) {
@@ -122,6 +134,16 @@ void handleLine(char* s) {
       pwm.setPWM(c, 0, angleToCounts(constrain(a, 0, 180)));
       Serial.print("T canal "); Serial.print(c); Serial.print(" -> "); Serial.println(a);
     }
+    return;
+  }
+  // "?" y "P" solo preguntan: NO sacan del modo prueba (la ESP manda "?" cada 300 ms)
+  if (!strcmp(s, "?")) { sendStatus(); return; }
+  if (!strcmp(s, "P")) {
+    Serial.print('P');
+    for (int j = 0; j < NJ; j++) { Serial.print(' '); Serial.print((int)potA[j]); }
+    Serial.print("   (ADC:");
+    for (int j = 0; j < NJ; j++) { Serial.print(' '); Serial.print(analogRead(POT[j])); }
+    Serial.println(")");
     return;
   }
   testMode = false;  // cualquier otro comando sale del modo prueba
@@ -146,14 +168,6 @@ void handleLine(char* s) {
   } else if (!strcmp(s, "MAN")) {
     remote = false;
     catchUp = true;
-  } else if (!strcmp(s, "?")) {
-    sendStatus();
-  } else if (!strcmp(s, "P")) {
-    Serial.print('P');
-    for (int j = 0; j < NJ; j++) { Serial.print(' '); Serial.print((int)potA[j]); }
-    Serial.print("   (ADC:");
-    for (int j = 0; j < NJ; j++) { Serial.print(' '); Serial.print(analogRead(POT[j])); }
-    Serial.println(")");
   }
 }
 
@@ -203,10 +217,18 @@ void loop() {
 
   for (int j = 0; j < NJ; j++) potA[j] = readPotAngle(j);
   if (testMode) return;
-  bool btn = digitalRead(BTN_PIN) == LOW;
+  bool esp = espConectada();
+  bool btn = !esp && digitalRead(BTN_PIN) == LOW;  // con la ESP conectada el botón no cuenta
 
-  if (remote) {
-    // Si alguien mueve un potenciómetro, recupera el control manual
+  if (esp) {
+    // ESP conectada: ignora los potenciómetros. Si estaba en manual, se queda donde está.
+    if (!remote) {
+      for (int j = 0; j < NJ; j++) tgt[j] = cur[j];
+      enterRemote();
+      catchUp = false;
+    }
+  } else if (remote) {
+    // Sin ESP: si alguien mueve un potenciómetro, recupera el control manual
     for (int j = 0; j < NJ; j++)
       if (fabs(potA[j] - potRef[j]) > TAKEOVER_DEG) { remote = false; catchUp = true; break; }
   }

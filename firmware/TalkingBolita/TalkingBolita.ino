@@ -1,8 +1,8 @@
 // =====================================================================
 //  Talking Bolita — ESP32-S3
 //  La compu escucha y procesa la voz (filtro de Kalman, efectos);
-//  la ESP32 dibuja la cara, reproduce el audio, tiene la pantalla touch
-//  para controlar el brazo y le manda órdenes al Arduino Uno del brazo.
+//  la ESP32 dibuja la cara, reproduce el audio, tiene 2 botones (Function =
+//  hablar, Mode = menú) para controlar el brazo y le manda órdenes al Arduino Uno del brazo.
 //
 //  Arduino IDE:  Placa "ESP32S3 Dev Module"
 //                PSRAM: "OPI PSRAM"   Flash Size: "16MB"
@@ -64,9 +64,10 @@ void audioTask(void*) {
     float acc = 0;
     int vol = g_volume;
     for (int i = 0; i < 256; i++) {
-      int32_t v = i < (int)n ? ((int32_t)mono[i] * vol) / 255 : 0;
+      int32_t raw = i < (int)n ? mono[i] : 0;
+      int32_t v = (raw * vol) / 255;
       st[2 * i] = st[2 * i + 1] = (int16_t)v;  // mismo audio en L y R
-      acc += (float)v * v;
+      acc += (float)raw * raw;  // la boca se mueve aunque el volumen esté en 0 (audio en la compu)
     }
     g_level = n ? sqrtf(acc / 256) / 32768.0f : 0;
     if (wasPlaying && n == 0) g_playDone = true;
@@ -146,33 +147,90 @@ void serialTask(void*) {
 }
 
 // ---------------- Botones ----------------
-const int BTN_PINS[2] = {PIN_BTN1, PIN_BTN2};
-bool btnPrev[2] = {true, true};
-uint32_t btnTime[2] = {0, 0};
+// FUNCTION: en la cara, mantener = hablar (manda "PTT 1" / "PTT 0" a la compu)
+// MODE: menú.  Los dos a la vez = PARO.  (detalle en Ui.h)
+enum { B_FUNC = 0, B_MODE = 1, N_BTN = 2 };
+const int BTN_PINS[N_BTN] = {PIN_BTN_FUNC, PIN_BTN_MODE};
+bool btnPrev[N_BTN] = {true, true};    // true = suelto (pull-up)
+uint32_t btnTime[N_BTN] = {0, 0};      // último cambio (antirrebote)
+uint32_t btnDown[N_BTN] = {0, 0};      // cuándo se presionó
+bool btnUsed[N_BTN] = {false, false};  // ya se usó en esta presión (combo o mantener)
+const uint32_t LONG_MS = 800;          // mantener Mode
+const uint32_t TAP_MS = 300;           // menos que esto = toque
 
-void onButton(int i) {
+void paro() {
+  arm.stop();   // detiene la rutina y regresa a inicio
+  arm.home();
+  g_flush = true;
+  face.setMood(SURPRISED, 0.8f, 800);
+  Serial.println("PARO");
+}
+
+void startTalk() {
+  if (ui.paused) return;
+  ui.talking = true;
+  g_flush = true;                  // si estaba hablando, se calla para escucharte
+  face.setMood(LISTEN, 1.0f);
+  Serial.println("PTT 1");
+}
+
+void endTalk(bool cancel) {
+  if (!ui.talking) return;
+  ui.talking = false;
+  face.setMood(NEUTRAL);
+  Serial.println(cancel ? "PTT C" : "PTT 0");
+}
+
+void onPress(int i) {
   g_lastActivity = millis();
-  Serial.printf("BTN %d\n", i + 1);
-  if (i == 0) {
-    ui.toggleScreen();
+  Serial.printf("BTN %s\n", i == B_FUNC ? "FUNC" : "MODE");
+  if (face.mood() == SLEEPY && !ui.paused) { face.setMood(NEUTRAL); face.setMood(HAPPY, 1, 1500); }  // la despierta
+
+  int other = 1 - i;
+  if (!btnPrev[other]) {           // los dos presionados: PARO
+    btnUsed[0] = btnUsed[1] = true;
+    endTalk(true);
+    paro();
+    return;
+  }
+  if (i == B_FUNC) {
+    if (ui.screen == SCR_FACE) startTalk();
+    else ui.onFuncPress();
+  }
+  // MODE actúa al soltar (toque) o al cumplir LONG_MS (mantener)
+}
+
+void onRelease(int i, uint32_t heldMs) {
+  if (btnUsed[i]) return;
+  if (i == B_FUNC) {
+    if (ui.talking) endTalk(false);
+    else if (heldMs < TAP_MS) ui.onFuncTap();
   } else {
-    arm.stop();      // paro: detiene la rutina y regresa a inicio
-    arm.home();
-    face.setMood(SURPRISED, 0.6f, 600);
+    ui.onModeTap();
   }
 }
 
 void readButtons() {
   uint32_t now = millis();
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < N_BTN; i++) {
     bool v = digitalRead(BTN_PINS[i]);
     if (v != btnPrev[i] && now - btnTime[i] > 40) {
       btnTime[i] = now;
       btnPrev[i] = v;
-      if (!v) onButton(i);  // presionado = LOW
+      if (!v) { btnDown[i] = now; btnUsed[i] = false; onPress(i); }  // presionado = LOW
+      else onRelease(i, now - btnDown[i]);
     }
   }
+  // Mode mantenido = salir
+  if (!btnPrev[B_MODE] && !btnUsed[B_MODE] && now - btnDown[B_MODE] > LONG_MS) {
+    btnUsed[B_MODE] = true;
+    ui.onModeLong();
+  }
+  if (ui.paroPedido) { ui.paroPedido = false; paro(); }
+  if (ui.paused && ui.talking) endTalk(true);
 }
+
+bool funcHeld() { return !btnPrev[B_FUNC] && !btnUsed[B_FUNC] && millis() - btnDown[B_FUNC] > TAP_MS; }
 
 // Pitido de arranque para probar la bocina
 void bootChirp() {
@@ -187,10 +245,13 @@ void bootChirp() {
 }
 
 void setup() {
-  for (int i = 0; i < 2; i++) pinMode(BTN_PINS[i], INPUT_PULLUP);
+  for (int i = 0; i < N_BTN; i++) pinMode(BTN_PINS[i], INPUT_PULLUP);
 
   Serial.setRxBufferSize(32768);
   Serial.begin(SERIAL_BAUD);
+  // Vaciar la FIFO del UART (128 bytes) a los 32 y no a los 120 (default a esta velocidad):
+  // con solo 8 bytes de margen se perdían datos (ERR checksum). Va DESPUÉS de begin().
+  Serial.setRxFIFOFull(32);
 
   tft.init();
   tft.setRotation(1);  // horizontal 320x240
@@ -208,7 +269,6 @@ void setup() {
 
   arm.begin(Serial1, PIN_ARM_RX, PIN_ARM_TX, ARM_BAUD);
   ui.begin(&tft, &face, &arm);
-  ui.calibrateTouch(digitalRead(PIN_BTN2) == LOW);  // botón 2 al encender = recalibrar
 
   i2s.setPins(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT);
   if (!i2s.begin(I2S_MODE_STD, AUDIO_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
@@ -250,11 +310,20 @@ void loop() {
   if (g_playDone) { g_playDone = false; Serial.println("DONE"); }
 
   // Se duerme si nadie le hace caso
-  if (now - g_lastActivity > SLEEP_AFTER_S * 1000UL && face.mood() != SLEEPY) {
+  if (!ui.talking && now - g_lastActivity > SLEEP_AFTER_S * 1000UL && face.mood() != SLEEPY) {
     face.setMood(SLEEPY);
   }
 
   arm.update();
+  // Prueba del UART con el Uno: si contesta, la bolita sonríe; avisa si se conecta o se pierde
+  static bool unoAntes = false;
+  bool unoAhora = arm.online();
+  if (unoAhora != unoAntes) {
+    unoAntes = unoAhora;
+    Serial.println(unoAhora ? "UNO ok" : "UNO sin respuesta");
+    if (unoAhora) face.setMood(HAPPY, 1, 1500);
+  }
+  if (arm.pong) { arm.pong = false; face.setMood(HAPPY, 1, 2000); }
   face.setTalkLevel(g_level * 7.0f);
-  ui.update(dt);  // touch + dibuja la pantalla activa (~30 ms a 40 MHz)
+  ui.update(dt, funcHeld());  // dibuja la pantalla activa (y mueve el brazo si Function está mantenido)
 }

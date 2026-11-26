@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 resultados/
 frases/
+librerias/
+pc/modelos/
+pc/respuestas/*.bak

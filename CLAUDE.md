@@ -12,10 +12,10 @@ Una mascota tipo Talking Tom que además controla un brazo robótico:
 
 ```
 Micrófono de la compu ─► Python (pc/): Kalman + efectos de voz + caras ─USB─► ESP32-S3
-ESP32-S3 (firmware/TalkingBolita/): pantalla touch 2.4" (cara + control del brazo), bocina, 2 botones
+ESP32-S3 (firmware/TalkingBolita/): pantalla 2.4" sin touch (cara + menú del brazo), bocina, 2 botones (Function = hablar, Mode = menú)
    │ UART 115200 (GPIO 40 TX → pin 0 del Uno; GPIO 41 RX ← pin 1 del Uno con divisor 1k/2k)
    ▼
-Arduino Uno (firmware/BrazoUno/) + PCA9685 ─► 5 servos.  Control "maestro": bracito con 4 potes + botón.
+Arduino Uno (firmware/BrazoESP/, o BrazoManual/ sin ESP) + PCA9685 ─► 5 servos.  Control "maestro": bracito con 4 potes + botón.
 ```
 
 Dos materias: **procesamiento de señales** (filtro de Kalman para limpiar voz en `pc/dsp.py`, y
@@ -35,29 +35,42 @@ calibración, pruebas repetitivas, reporte).
 - Servos: 3× MG996R, 1× SG90, 1× HPS-2018MG. **No pasar de 6 V** (SG90).
 - Cables de servo: naranja/blanco = señal (amarillo en la placa), rojo = V+, café/negro = GND.
 - ESP32-S3 N16R8 (PSRAM octal: en Arduino IDE elegir **OPI PSRAM**, 16MB). Pantalla ST7789
-  240×320 con touch XPT2046 (pines en `firmware/TalkingBolita/Config.h`). MAX98357 + bocina 8 Ω.
+  240×320 **sin touch** (el chip U1 no viene soldado), botones Function GPIO 15 y Mode GPIO 16 (los dos = paro)
+  (pines en `firmware/TalkingBolita/Config.h`). Placa YD-ESP32-S3. MAX98357 (VIN a **3V3**: el 5Vin de esta placa es entrada) + bocina 8 Ω 2 W.
+- La ESP habla con la compu por el USB-C **UART** (no el nativo): en el nativo Python da `Write timeout`.
 - No hay micrófono en la ESP: el audio lo captura la computadora.
+- La voz puede salir por la bocina de la ESP, la compu o las dos (`tom.py --audio esp|pc|ambos`;
+  sin la opción pregunta al arrancar). La ESP32-S3 no sirve para audífonos BT (solo BLE).
+- Brazo: mientras no se calibre el control, las reacciones son gestos con `T canal ángulo`
+  (`pc/gestos.py`). En el Uno, `?` y `P` no sacan del modo prueba (la ESP manda `?` cada 300 ms).
 
-## Protocolo Uno (texto, 115200, una línea por comando)
+## Protocolo Uno (texto, 115200, una línea por comando) — `firmware/BrazoESP`
 `J b h c m` ángulos (−1 = no cambiar) · `H 0-100` pinza · `V °/s` · `HOME` · `ESTIRA` · `MAN`
-(volver a potes) · `?` → `S b h c m mano modo` · `P` → ángulos de los potes + ADC crudo ·
-`T canal ángulo` prueba un canal crudo (sale con `MAN`/`HOME`).
-Al encender va a `HOME_POS` y se queda; si un pote se mueve >20° pasa a modo manual (copia al
-control, primero despacio). Cualquier comando de la ESP lo pone en modo remoto.
+(volver al control) · `?` → `S b h c m mano modo` · `P` → `P b h c m (ADC ...)` ·
+`T canal ángulo` prueba un canal crudo (si es una articulación, el Uno anota dónde quedó) ·
+diagnóstico de BrazoManual: `D`, `REVISA`, `BUSCA j`, `CAL j a`, `PUNTO n`.
+Al encender copia al control (como BrazoManual). Cuando llega la ESP (cualquier línea; manda `?`
+cada 300 ms) se queda quieto y pasa a REMOTO; con la ESP conectada los potes y el botón se ignoran,
+salvo que llegue `MAN`. Sin ESP (2 s sin nada) y en REMOTO, mover un pote >20° regresa al control.
+`BrazoUno`/`BrazoUnoV2` son las versiones viejas (mapeo 240–800, codo mal); ya no se usan.
 
 ESP ↔ compu: tramas binarias `A5 5A tipo len16 datos checksum` (ver `TalkingBolita.ino` y
 `pc/bolita.py`). Tipos: M cara, L mirada, A audio 16 kHz, S parar audio, V volumen,
 B orden para el brazo (rutina o comando crudo), P ping.
+ESP → compu: líneas de texto: `PTT 1` / `PTT 0` / `PTT C` (Function: grabar / soltar / cancelar),
+`VOZ` (menú: otra voz), `CANTA` (menú: canta), `PARO`, `DONE` (terminó el audio), `READY`.
 
 ## Cómo trabajar aquí
 - Compilar antes de entregar:
-  - Uno: `arduino-cli compile -b arduino:avr:uno firmware/BrazoUno` (librería *Adafruit PWM Servo Driver Library* + *Adafruit BusIO*)
+  - Uno: `arduino-cli compile -b arduino:avr:uno firmware/BrazoESP` (y `firmware/BrazoManual`) (librería *Adafruit PWM Servo Driver Library* + *Adafruit BusIO*)
   - ESP32: `arduino-cli compile -b "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M" firmware/TalkingBolita` (librería *LovyanGFX*; incluir `Display.h` **antes** de `ESP_I2S.h`, choque de tipos en core 4.x)
-  - Python: `python pc/tom.py --simular` funciona sin hardware.
+  - Python: `python pc/tom.py --simular` funciona sin hardware. En la compu de Alonso: `py -3.12` (tiene Python 2.7 también).
+- Palabras → respuestas: tabla `RESPUESTAS` en `pc/respuestas.py`; audios en `pc/respuestas/*.wav` (se graban con `pc/grabar.py`);
+  modelo Vosk en `pc/modelos/` (no va al repo).
 - **Cuidado con el Arduino IDE:** si un `.ino` está abierto, el IDE vuelve a guardar su versión vieja
   encima. Pide cerrar la pestaña sin guardar, o entrega el cambio como líneas para pegar en el IDE.
 - Cambios de calibración (canales, potes, `INVERT`, `HOME_POS`, `STRETCH_POS`, `LIM_*`,
-  `HAND_OPEN/CLOSED`) están todos al inicio de `BrazoUno.ino`; anótalos en `HISTORIAL.md`, que
+  `HAND_*_DEG`, `CAL_*`) están al inicio de `BrazoESP.ino` **y** `BrazoManual.ino` (mantenerlos iguales); anótalos en `HISTORIAL.md`, que
   sirven para el reporte de la práctica.
 - Seguridad: cambios de cables siempre con la fuente apagada; prender la fuente con la mano en el
   switch; si la fuente marca CC, algo está forzado.

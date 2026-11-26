@@ -1,4 +1,30 @@
-# Estado y pendientes (23 nov 2026)
+# Estado y pendientes (26 nov 2026)
+
+## Ahora: probar el UART ESP ↔ Uno con `firmware/BrazoESP`
+`BrazoManual.ino` (en `firmware/BrazoManual/`) ya mueve bien los 4 ejes con el control.
+`BrazoESP.ino` es ese mismo código + las órdenes de la ESP. Probar en este orden:
+1. **Uno solo.** Quita el cable del pin 0, sube `BrazoESP`, fuente encendida. En el Monitor Serie
+   (115200, "Nueva línea"): debe copiar al control igual que BrazoManual. Luego `?` → `S ...`,
+   `V 60`, `J -1 -1 120 -1` (el codo va suave a 120°), `HOME`, `MAN` (regresa al control despacio).
+2. **Ida (ESP → Uno).** Conecta GPIO 40 → pin 0 y GND común. Al prender la ESP el brazo se queda
+   quieto (modo remoto). `py -3.12 pc/gestos.py --manual --port COM8` y prueba un canal.
+3. **Vuelta (Uno → ESP).** Pin 1 → divisor 1k/2k → GPIO 41. `py -3.12 pc/probar_uart.py --port COM8`:
+   debe decir que el Uno contestó y la cara sonríe.
+4. **Voz, motor por motor.** `py -3.12 pc/tom.py --port COM8` y di "mueve el codo a ciento veinte",
+   "la base a noventa"... (articulaciones → `J` a 60 °/s; "servo diez a veinte" → `T` crudo).
+5. Después: rutinas (baile + música, saludo...) con `J`/`HOME` en vez de `T` (casa ya se puede medir con `P`).
+
+## Cambio de planes (25 nov)
+- **La bocina de la ESP ya no suena** (probablemente el MAX98357). Ahora **el micrófono y las
+  bocinas son los de la compu** (o audífonos BT conectados a la compu). La ESP no puede usar
+  audífonos BT: la S3 solo tiene BLE, y los audífonos usan Bluetooth clásico.
+- **El brazo hace gestos sencillos** con `T canal ángulo` (`pc/gestos.py`), así funciona aunque el
+  control no esté calibrado.
+- **Volver a subir el sketch al Uno** (`BrazoUno` o `BrazoUnoV2`, el que usen): antes, el `?` que la
+  ESP manda cada 300 ms sacaba al servo del modo prueba y el `T` se deshacía.
+- **Volver a subir `TalkingBolita.ino`**: la boca ahora se mueve aunque el volumen de la ESP esté en 0.
+- Probar en orden: `python gestos.py saludo --uno COMx` (Uno solo) → `python gestos.py saludo`
+  (pasando por la ESP) → `python tom.py`.
 
 > Si usas Claude: abre este repo y dile *"lee CLAUDE.md, HISTORIAL.md y PENDIENTES.md y sigamos con el pendiente 1"*.
 
@@ -19,10 +45,15 @@
 - Con el control: **base y hombro ya se mueven bien**.
 
 ## Pendientes (en este orden)
-1. **Codo / muñeca del control.** El pote del codo mueve la muñeca del robot y el de la muñeca
-   parece no hacer nada. Prueba: escribir `P`, mover **solo** el pote del codo, `P` otra vez; luego
-   lo mismo con la muñeca. Ver qué número cambia (orden: base, hombro, codo, muñeca = A3, A2, A1, A0)
-   y corregir la línea `POT[NJ]`.
+1. **Codo (canal 12).** Con el control, base, hombro y muñeca ya funcionan (25 nov); el codo no.
+   Separar si es el servo o el pote:
+   - Monitor Serie (cable del pin 0 quitado): `T 12 150`, `T 12 175`. ¿Se mueve?
+     - **No:** es el servo, su conector o la fuente. Probar el servo del codo en el canal 15 (vacío)
+       con `T 15 150`, o un servo que sí jale en el canal 12. Ver si la fuente marca CC (el codo carga peso).
+     - **Sí:** es el pote. `P`, mover solo el pote del codo, `P` otra vez: el 3.er número (A1) debe
+       cambiar. Ojo: el ADC del codo llegó a 142 en una punta (fuera de 240–800) → el ángulo se queda
+       en 180 en esa zona. Ajustar `POT_LO`/`POT_HI` o el mapeo del codo, y revisar `INVERT` del codo
+       (en `BrazoUnoV2` está en `true`, en `BrazoUno` en `false`).
 2. **Sentido de giro.** Si una articulación va al revés que el control → `true` en `INVERT[NJ]`
    (base, hombro, codo, muñeca). En el repo están todos en `false`.
 3. **Pinza (canal 10).** Vibra con `T 10 60` / `T 10 120` (choca con su tope). Probar `T 10 0`,

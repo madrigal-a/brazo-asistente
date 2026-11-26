@@ -76,6 +76,7 @@ class Arm {
   int pos[J_N] = {90, 90, 90, 90};  // último estado conocido (o lo que mandamos)
   int hand = 0;
   bool remote = false;
+  bool pong = false;  // el Uno contestó un "P" (prueba del UART): la cara sonríe
 
   void begin(HardwareSerial& s, int rx, int tx, uint32_t baud) {
     _s = &s;
@@ -179,6 +180,13 @@ class Arm {
   uint8_t _len = 0;
 
   void parse(const char* l) {
+    // Lo que no sea el estado "S ..." ni el eco de los pasitos "T canal ..." se reenvía a la compu
+    // como "UNO <línea>" (sirve para probar el UART: python probar_uart.py)
+    if (l[0] != 'S' && strncmp(l, "T canal", 7) != 0) {
+      Serial.print("UNO ");
+      Serial.println(l);
+      if (l[0] == 'P') pong = true;
+    }
     int b, s, e, w, h, m;
     if (l[0] == 'S' && sscanf(l + 1, "%d %d %d %d %d %d", &b, &s, &e, &w, &h, &m) == 6) {
       _lastStatus = millis();

@@ -5,4 +5,4 @@ soundfile
 pyserial
 matplotlib
 numba        # opcional: acelera el filtro de Kalman ~50x
-# vosk       # opcional: reconocer palabras en español sin internet
+vosk         # reconoce palabras en español sin internet (modelo en pc/modelos)

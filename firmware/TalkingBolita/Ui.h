@@ -1,71 +1,80 @@
 // =====================================================================
-//  Interfaz touch: pantalla de la cara y pantalla de control del brazo
+//  Interfaz con 2 botones (la pantalla no trae touch: el chip U1 de atrás viene vacío)
+//
+//  FUNCTION (GPIO 15)              MODE (GPIO 16)
+//  Cara:  mantener = hablar         toque = abrir el menú
+//  Menú:  elegir la opción          toque = siguiente opción · mantener = volver a la cara
+//  Brazo: mantener = mover          toque = siguiente articulación · mantener = volver al menú
+//         toque = cambiar dirección
+//  Los dos a la vez = PARO (lo maneja TalkingBolita.ino)
 // =====================================================================
 #pragma once
-#include <Preferences.h>
 #include "Display.h"
 #include "Face.h"
 #include "Arm.h"
 
-enum Screen { SCR_FACE, SCR_ARM };
+enum Screen { SCR_FACE, SCR_MENU, SCR_ARM };
 
-struct UiButton { int16_t x, y, w, h; const char* label; };
+enum MenuItem { M_SEGUIR, M_PAUSA, M_CANTA, M_SALUDA, M_BAILA, M_MANO, M_INICIO, M_MOVER, M_VOZ, M_PARO, M_N };
 
 class Ui {
  public:
   Screen screen = SCR_FACE;
+  bool paused = false;    // en pausa la bolita no escucha (Function no hace nada en la cara)
+  bool talking = false;   // Function mantenido: la compu está grabando
+  bool paroPedido = false;  // el menú pidió paro; TalkingBolita.ino lo atiende
 
   void begin(LGFX* tft, Face* face, Arm* arm) {
     _tft = tft; _face = face; _arm = arm;
   }
 
-  // Calibración del touch: se guarda en memoria; se repite si mantienes el botón 2 al encender
-  void calibrateTouch(bool force) {
-    Preferences prefs;
-    prefs.begin("touch", false);
-    uint16_t cal[8];
-    if (!force && prefs.getBytesLength("cal") == sizeof(cal)) {
-      prefs.getBytes("cal", cal, sizeof(cal));
-      _tft->setTouchCalibrate(cal);
-    } else {
-      _tft->fillScreen(TFT_BLACK);
-      _tft->setTextColor(TFT_WHITE);
-      _tft->setTextSize(2);
-      _tft->setTextDatum(middle_center);
-      _tft->drawString("Toca cada esquina", _tft->width() / 2, _tft->height() / 2 - 12);
-      _tft->drawString("cuando aparezca", _tft->width() / 2, _tft->height() / 2 + 12);
-      _tft->calibrateTouch(cal, TFT_YELLOW, TFT_BLACK, 18);
-      prefs.putBytes("cal", cal, sizeof(cal));
-      _tft->setTextDatum(top_left);
+  // ----- MODE -----
+  void onModeTap() {
+    switch (screen) {
+      case SCR_FACE: screen = SCR_MENU; _sel = M_SEGUIR; break;
+      case SCR_MENU: _sel = (_sel + 1) % M_N; break;
+      case SCR_ARM:  _joint = (_joint + 1) % J_N; _acc = 0; break;
     }
-    prefs.end();
+  }
+  void onModeLong() {
+    if (screen == SCR_MENU) screen = SCR_FACE;
+    else if (screen == SCR_ARM) screen = SCR_MENU;
   }
 
-  void toggleScreen() { screen = (screen == SCR_FACE) ? SCR_ARM : SCR_FACE; }
+  // ----- FUNCTION fuera de la cara (en la cara es hablar: lo maneja TalkingBolita.ino) -----
+  void onFuncPress() {
+    if (screen == SCR_MENU) runItem(_sel);
+  }
+  void onFuncTap() {  // soltado rápido
+    if (screen == SCR_ARM) _dir = -_dir;
+  }
 
-  // Llamar en cada cuadro. dt en segundos.
-  void update(float dt) {
-    int32_t tx, ty;
-    bool touching = _tft->getTouch(&tx, &ty) > 0;
-    bool down = touching && !_wasTouching;  // recién tocó
-    _wasTouching = touching;
-
-    if (screen == SCR_FACE) {
-      if (down) {
-        if (hit(ICON, tx, ty)) {
-          screen = SCR_ARM;
+  // Llamar en cada cuadro. dt en segundos. funcHeld: Function mantenido > 0.3 s
+  void update(float dt, bool funcHeld) {
+    switch (screen) {
+      case SCR_FACE:
+        _face->update(dt, false);
+        drawFaceOverlay();
+        _face->sprite()->pushSprite(0, 0);
+        break;
+      case SCR_MENU:
+        drawMenu();
+        break;
+      case SCR_ARM:
+        if (funcHeld) {  // mantener Function: la articulación se mueve seguido a HOLD_DPS °/s
+          _acc += _dir * HOLD_DPS * dt;
+          int d = (int)_acc;
+          if (d != 0) {
+            int a = constrain(_arm->pos[_joint] + d, 0, 180);
+            if (a != _arm->pos[_joint]) _arm->setJoint(_joint, a);
+            else _dir = -_dir;  // llegó al tope: la próxima vez va al otro lado
+            _acc -= d;
+          }
         } else {
-          _face->setMood(OUCH, 1, 1200);  // le picaste
-          _arm->command("susto");
-          Serial.println("TOUCH cara");
+          _acc = 0;
         }
-      }
-      _face->update(dt, false);
-      drawIcon();
-      _face->sprite()->pushSprite(0, 0);
-    } else {
-      handleArmTouch(touching, down, tx, ty);
-      drawArmScreen();
+        drawArmScreen();
+        break;
     }
   }
 
@@ -73,64 +82,94 @@ class Ui {
   LGFX* _tft = nullptr;
   Face* _face = nullptr;
   Arm* _arm = nullptr;
-  bool _wasTouching = false;
-  int _dragging = -1;
+  int _sel = 0;          // opción del menú
+  int _joint = 0;        // articulación en "Mover brazo"
+  int _dir = +1;         // dirección al mover
+  float _acc = 0;
+  static constexpr float HOLD_DPS = 40;  // grados por segundo al mantener Function
 
-  // ----- Distribución (pantalla horizontal 320x240) -----
-  static constexpr UiButton ICON = {270, 196, 46, 40, "Brazo"};
-  static constexpr int SL_X0 = 82, SL_X1 = 276, SL_Y0 = 30, SL_DY = 40;
-  UiButton _btns[5] = {
-    {4, 192, 59, 44, "Mano"},
-    {67, 192, 59, 44, "Inicio"},
-    {130, 192, 59, 44, "Saluda"},
-    {193, 192, 59, 44, "Baila"},
-    {256, 192, 60, 44, "Cara"},
-  };
-
-  static bool hit(const UiButton& b, int x, int y) {
-    return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
-  }
-
-  int sliderY(int j) const { return SL_Y0 + j * SL_DY; }
-
-  void handleArmTouch(bool touching, bool down, int x, int y) {
-    if (!touching) { _dragging = -1; return; }
-    if (down) {
-      _dragging = -1;
-      for (int j = 0; j < J_N; j++)
-        if (abs(y - sliderY(j)) < SL_DY / 2 && x > SL_X0 - 20) _dragging = j;
-      if (_dragging < 0) {
-        for (int i = 0; i < 5; i++) if (hit(_btns[i], x, y)) pressButton(i);
-      }
-    }
-    if (_dragging >= 0) {
-      int a = (int)((x - SL_X0) * 180.0f / (SL_X1 - SL_X0));
-      a = constrain(a, 0, 180);
-      if (a != _arm->pos[_dragging]) _arm->setJoint(_dragging, a);
-    }
-  }
-
-  void pressButton(int i) {
+  const char* itemLabel(int i) const {
     switch (i) {
-      case 0: _arm->setHand(_arm->hand > 50 ? 0 : 100); break;
-      case 1: _arm->command("inicio"); break;
-      case 2: _arm->command("saludo"); _face->setMood(HAPPY, 1, 3000); break;
-      case 3: _arm->command("baile"); _face->setMood(HAPPY, 1, 4000); break;
-      case 4: screen = SCR_FACE; break;
+      case M_SEGUIR: return "Seguir";
+      case M_PAUSA:  return paused ? "Reanudar" : "Pausa";
+      case M_CANTA:  return "Canta";
+      case M_SALUDA: return "Saluda";
+      case M_BAILA:  return "Baila";
+      case M_MANO:   return _arm->hand > 50 ? "Abrir mano" : "Cerrar mano";
+      case M_INICIO: return "Brazo a inicio";
+      case M_MOVER:  return "Mover brazo";
+      case M_VOZ:    return "Otra voz";
+      case M_PARO:   return "PARO";
+    }
+    return "";
+  }
+
+  void runItem(int i) {
+    switch (i) {
+      case M_SEGUIR: screen = SCR_FACE; break;
+      case M_PAUSA:
+        paused = !paused;
+        if (paused) _face->setMood(SLEEPY, 1);
+        else { _face->setMood(NEUTRAL); _face->setMood(HAPPY, 1, 1500); }
+        screen = SCR_FACE;
+        break;
+      case M_CANTA:
+        Serial.println("CANTA");  // la compu manda la canción; la boca se mueve con el audio
+        _face->setMood(HAPPY, 1, 2000);
+        screen = SCR_FACE;
+        break;
+      case M_SALUDA: _arm->command("saludo"); _face->setMood(HAPPY, 1, 3000); screen = SCR_FACE; break;
+      case M_BAILA:  _arm->command("baile");  _face->setMood(HAPPY, 1, 4000); screen = SCR_FACE; break;
+      case M_MANO:   _arm->setHand(_arm->hand > 50 ? 0 : 100); break;  // se queda en el menú
+      case M_INICIO: _arm->command("inicio"); screen = SCR_FACE; break;
+      case M_MOVER:  screen = SCR_ARM; _joint = 0; _acc = 0; break;
+      case M_VOZ:
+        Serial.println("VOZ");  // la compu cambia el efecto de voz
+        _face->setMood(SURPRISED, 0.7f, 800);
+        screen = SCR_FACE;
+        break;
+      case M_PARO: paroPedido = true; screen = SCR_FACE; break;
     }
   }
 
-  void drawIcon() {
+  // Encima de la cara: micrófono cuando hablas, letrero cuando está en pausa
+  void drawFaceOverlay() {
     auto& s = *_face->sprite();
-    s.fillRoundRect(ICON.x, ICON.y, ICON.w, ICON.h, 8, s.color565(40, 50, 90));
-    // bracito simple: base, dos segmentos y pinza
-    uint16_t c = s.color565(220, 230, 255);
-    int bx = ICON.x + 12, by = ICON.y + 32;
-    s.fillRect(bx - 6, by, 14, 4, c);
-    s.drawWideLine(bx, by, bx + 8, by - 16, 2, c);
-    s.drawWideLine(bx + 8, by - 16, bx + 24, by - 22, 2, c);
-    s.drawWideLine(bx + 24, by - 22, bx + 30, by - 16, 1.5f, c);
-    s.drawWideLine(bx + 24, by - 22, bx + 31, by - 25, 1.5f, c);
+    if (talking) {
+      s.fillCircle(300, 20, 10, TFT_RED);
+      s.fillRoundRect(296, 11, 8, 12, 4, TFT_WHITE);  // micrófono
+      s.drawFastVLine(300, 23, 4, TFT_WHITE);
+    }
+    if (paused) {
+      s.setTextSize(2);
+      s.setTextColor(s.color565(255, 200, 40));
+      s.setTextDatum(top_center);
+      s.drawString("PAUSA", 160, 6);
+      s.setTextDatum(top_left);
+    }
+  }
+
+  void drawMenu() {
+    auto& s = *_face->sprite();
+    uint16_t bg = s.color565(18, 22, 44);
+    uint16_t accent = s.color565(255, 200, 40);
+    uint16_t text = s.color565(230, 235, 255);
+    uint16_t dim = s.color565(140, 150, 190);
+    s.fillScreen(bg);
+    s.setTextSize(1);
+    s.setTextColor(dim);
+    s.setCursor(4, 5);
+    s.print("MENU   Mode: siguiente (mantener: salir)   Fn: elegir");
+    s.setTextSize(2);
+    for (int i = 0; i < M_N; i++) {
+      int y = 20 + i * 22;
+      bool sel = (i == _sel);
+      if (sel) s.fillRoundRect(2, y, 316, 21, 6, accent);
+      s.setTextColor(sel ? bg : (i == M_PARO ? s.color565(255, 90, 90) : text));
+      s.setCursor(12, y + 3);
+      s.print(itemLabel(i));
+    }
+    s.pushSprite(0, 0);
   }
 
   void drawArmScreen() {
@@ -139,45 +178,46 @@ class Ui {
     uint16_t track = s.color565(50, 60, 100);
     uint16_t accent = s.color565(255, 200, 40);
     uint16_t text = s.color565(230, 235, 255);
+    uint16_t dim = s.color565(140, 150, 190);
     s.fillScreen(bg);
     s.setTextSize(1);
     s.setTextColor(text);
 
     // Estado
     s.setCursor(4, 4);
-    if (!_arm->online()) s.print("Uno: sin respuesta (revisa RX/TX)");
-    else s.print(_arm->remote ? "Uno: modo ESP32" : "Uno: modo potenciometros");
+    if (!_arm->online()) s.print("Uno: sin respuesta");
+    else s.print(_arm->remote ? "Uno: modo ESP32" : "Uno: modo potes");
     if (_arm->busy()) { s.setCursor(250, 4); s.setTextColor(accent); s.print("rutina..."); }
 
-    // Sliders
+    // Sliders (mismo dibujo que antes, a 40 px)
+    const int X0 = 82, X1 = 276;
     s.setTextSize(2);
     for (int j = 0; j < J_N; j++) {
-      int y = sliderY(j);
-      s.setTextColor(text);
+      int y = 34 + j * 40;
+      bool sel = (j == _joint);
+      if (sel) s.drawRoundRect(0, y - 17, 318, 34, 6, TFT_WHITE);
+      s.setTextColor(sel ? accent : text);
       s.setCursor(4, y - 7);
       s.print(JOINT_NAMES[j]);
-      s.fillRoundRect(SL_X0, y - 4, SL_X1 - SL_X0, 8, 4, track);
-      int kx = SL_X0 + _arm->pos[j] * (SL_X1 - SL_X0) / 180;
-      s.fillRoundRect(SL_X0, y - 4, kx - SL_X0, 8, 4, accent);
-      s.fillCircle(kx, y, _dragging == j ? 13 : 11, _dragging == j ? TFT_WHITE : accent);
+      s.fillRoundRect(X0, y - 4, X1 - X0, 8, 4, track);
+      int kx = X0 + _arm->pos[j] * (X1 - X0) / 180;
+      s.fillRoundRect(X0, y - 4, kx - X0, 8, 4, accent);
+      s.fillCircle(kx, y, sel ? 13 : 11, sel ? TFT_WHITE : accent);
       s.setTextSize(1);
-      s.setCursor(SL_X1 + 10, y - 3);
+      s.setTextColor(text);
+      s.setCursor(X1 + 8, y - 3);
       s.printf("%3d", _arm->pos[j]);
+      if (sel) { s.setTextColor(accent); s.print(_dir > 0 ? " +" : " -"); }
       s.setTextSize(2);
     }
 
-    // Botones
+    // Ayuda
     s.setTextSize(1);
-    s.setTextDatum(middle_center);
-    for (int i = 0; i < 5; i++) {
-      const UiButton& b = _btns[i];
-      bool on = (i == 0 && _arm->hand > 50);
-      s.fillRoundRect(b.x, b.y, b.w, b.h, 8, on ? accent : track);
-      s.setTextColor(on ? bg : text);
-      const char* label = (i == 0) ? (_arm->hand > 50 ? "Abrir" : "Cerrar") : b.label;
-      s.drawString(label, b.x + b.w / 2, b.y + b.h / 2);
-    }
-    s.setTextDatum(top_left);
+    s.setTextColor(dim);
+    s.setCursor(4, 200);
+    s.print("Fn mantener: mover   Fn toque: cambia + / -");
+    s.setCursor(4, 216);
+    s.print("Mode: siguiente   Mode mantener: menu   Ambos: PARO");
     s.pushSprite(0, 0);
   }
 };
