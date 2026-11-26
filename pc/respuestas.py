@@ -28,17 +28,19 @@ FS = 16000
 #  cara, rutina del brazo (None = no se mueve; "CANTA" = canta; "VOZ" = cambia la voz))
 # Se usa la PRIMERA que coincida, así que las más específicas van arriba.
 RESPUESTAS = [
+    # "¿te gusta ...?" -> siempre dice que sí (va primero: "¿te gusta bailar?" es un sí, no un baile)
+    (r"\b(te gusta|te gustan|te gustaria|te encanta|te encantan)\b", "si", "¡Sí! ¡Me encanta!", HAPPY, "si"),
     (r"\b(otra voz|cambia (la |de )?voz)\b", "voz", "¿Así? ¿Te gusta mi voz nueva?", SURPRISED, "VOZ"),
     (r"\b(canta|cantame|cancion|musica)\b", None, None, HAPPY, "CANTA"),
     (r"\b(te llamas|llamas|quien eres|tu nombre)\b", "nombre", "¡Soy la Bolita, y tengo un brazo robot!", HAPPY, "saludo"),
     (r"\b(como estas|que tal|como te va|como andas)\b", "bien", "¡Súper bien! ¿Y tú cómo estás?", HAPPY, "si"),
     (r"\b(hola|buenos dias|buenas tardes|que onda)\b", "hola", "¡Hola, hola! ¿Qué hacemos hoy?", HAPPY, "saludo"),
     (r"\b(adios|bye|nos vemos|hasta luego)\b", "adios", "¡Adiós! ¡Vuelve pronto!", HAPPY, "saludo"),
-    (r"\b(baila|bailale|fiesta)\b", "baile", "¡A bailar se ha dicho!", HAPPY, "baile"),
+    (r"\b(baila|bailale|bailar|fiesta)\b", "baile", "¡A bailar se ha dicho!", HAPPY, "CANTA"),  # música + baile
     (r"\b(estirate|estira|estirado)\b", "estirar", "¡Uuuf, qué buena estirada!", SURPRISED, "estirar"),
     (r"\b(agarra|toma|recoge)\b", "agarrar", "¡Lo tengo!", LISTEN, "agarrar"),
     (r"\b(suelta|sueltalo)\b", "soltar", "Ahí te va.", NEUTRAL, "soltar"),
-    (r"\b(inicio|quieto|alto|detente)\b", "quieto", "Ok, me quedo quieto.", NEUTRAL, "inicio"),
+    (r"\b(inicio|quieto|alto|detente|casa)\b", "quieto", "Ok, me quedo quieto.", NEUTRAL, "inicio"),
     (r"\b(bu|susto|cuidado)\b", "susto", "¡Aaay! ¡Qué susto!", SURPRISED, "susto"),
     (r"\b(duermete|a dormir|buenas noches)\b", "noches", "Buenas noches... zzz", SLEEPY, "inicio"),
     (r"\b(tonto|tonta|feo|fea)\b", "triste", "Oye... eso no fue bonito.", SAD, "no"),

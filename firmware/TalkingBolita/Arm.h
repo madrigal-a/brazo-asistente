@@ -17,50 +17,40 @@ struct KeyFrame { int16_t b, s, e, w, hand, speed, waitMs; };
 
 // ----- Rutinas: ajusta los ángulos a tu brazo -----
 static const KeyFrame R_INICIO[] = {
-  {CASA, 0, 0, 0, 0, 90, 1500},
+  {CASA, 0, 0, 0, -1, 60, 1500},
 };
 static const KeyFrame R_ESTIRAR[] = {
   {ESTIRADO, 0, 0, 0, -1, 60, 2500},
 };
-static const KeyFrame R_SALUDO[] = {
-  {90, 110, 60, 90, 0, 120, 1000},
-  {-1, -1, -1, 40, -1, 220, 400},
-  {-1, -1, -1, 140, -1, 220, 450},
-  {-1, -1, -1, 40, -1, 220, 450},
-  {-1, -1, -1, 140, -1, 220, 450},
-  {-1, -1, -1, 90, -1, 220, 400},
-  {CASA, 0, 0, 0, -1, 90, 1200},
+// Casa: 90 80 90 · estirado: 100 165 5 (HOME_POS / STRETCH_POS del Uno). Muñeca y pinza sueltas.
+static const KeyFrame R_SALUDO[] = {   // = sí: se estira y mueve el codo 5 <-> 10 tres veces
+  {ESTIRADO, 0, 0, 0, -1, 80, 2200},
+  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 250},
+  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 250},
+  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 400},
+  {CASA, 0, 0, 0, -1, 60, 2000},
 };
-static const KeyFrame R_BAILE[] = {
-  {60, 100, 70, 60, 0, 150, 600},
-  {120, 100, 70, 120, 100, 150, 600},
-  {60, 100, 70, 60, 0, 150, 600},
-  {120, 100, 70, 120, 100, 150, 600},
-  {90, 120, 50, 90, 0, 150, 600},
-  {CASA, 0, 0, 0, 0, 90, 1200},
+static const KeyFrame R_BAILE[] = {    // base 50 <-> 110, hombro 160 <-> 165, tres veces
+  {50, 160, -1, -1, -1, 90, 1200},
+  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
+  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
+  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
+  {CASA, 0, 0, 0, -1, 60, 1800},
 };
-static const KeyFrame R_AGARRAR[] = {
-  {-1, -1, -1, -1, 0, 90, 400},       // abre
-  {-1, 60, 120, 70, -1, 70, 1600},    // baja
-  {-1, -1, -1, -1, 100, 90, 800},     // cierra
-  {-1, 100, 80, 90, -1, 70, 1500},    // sube
+static const KeyFrame R_AGARRAR[] = {   // sin pinza todavía: no hace nada
+  {-1, -1, -1, -1, -1, 60, 100},
 };
 static const KeyFrame R_SOLTAR[] = {
-  {-1, -1, -1, -1, 0, 90, 600},
+  {-1, -1, -1, -1, -1, 60, 100},
 };
-static const KeyFrame R_SUSTO[] = {   // se echa para atrás
-  {-1, 125, 40, 60, -1, 300, 500},
-  {-1, -1, -1, -1, -1, 300, 700},
-  {CASA, 0, 0, 0, -1, 80, 1300},
-};
-static const KeyFrame R_SI[] = {
-  {-1, -1, -1, 60, -1, 200, 350}, {-1, -1, -1, 120, -1, 200, 350},
-  {-1, -1, -1, 60, -1, 200, 350}, {-1, -1, -1, 90, -1, 200, 400},
+static const KeyFrame R_SUSTO[] = {     // base de lado a lado
+  {70, -1, -1, -1, -1, 160, 400}, {110, -1, -1, -1, -1, 160, 450}, {90, -1, -1, -1, -1, 160, 450},
 };
 static const KeyFrame R_NO[] = {
   {70, -1, -1, -1, -1, 160, 400}, {110, -1, -1, -1, -1, 160, 450},
   {70, -1, -1, -1, -1, 160, 450}, {90, -1, -1, -1, -1, 160, 450},
 };
+#define R_SI R_SALUDO
 
 struct Routine { const char* name; const KeyFrame* frames; uint8_t n; };
 #define RT(name, arr) {name, arr, sizeof(arr) / sizeof(arr[0])}

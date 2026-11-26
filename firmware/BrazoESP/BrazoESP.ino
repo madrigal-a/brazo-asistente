@@ -79,9 +79,9 @@ const float MAX_DPS = 300;                 // velocidad máxima siguiendo al con
 const float CATCHUP_DPS = 70;              // velocidad al regresar al control (MAN / sin ESP)
 const float DEADBAND = 1.0;                // no mover si el cambio es menor (quita zumbido)
 
-// Poses para la ESP (b h c m). Se miden con P poniendo el control en la pose.
-int HOME_POS[NJ]    = {119, 22,  175, 84};   // CASA: recogido
-int STRETCH_POS[NJ] = {118, 175, 10,  139};  // ESTIRADO
+// Poses (b h c m), medidas con la TUI el 26 nov. -1 = no tocar esa articulación (se queda suelta).
+int HOME_POS[NJ]    = {90,  80,  90, -1};    // CASA
+int STRETCH_POS[NJ] = {100, 165, 5,  -1};    // ESTIRADO
 
 const uint32_t ESP_TIMEOUT_MS = 2000;      // sin recibir nada en este tiempo = ESP desconectada
 const int TAKEOVER_DEG = 20;               // sin ESP: mover un pote esto regresa a CONTROL
@@ -138,9 +138,45 @@ uint16_t angleToCounts(float a) {
 uint16_t jointCounts(int j, float a) { return angleToCounts(INVERT[j] ? 180 - a : a); }
 float clampJoint(int j, float a) { return constrain(a, LIM_MIN[j], LIM_MAX[j]); }
 
+// ----- PCA9685: escribe y recuerda cada canal, y se recupera si el chip se reinicia -----
+// Si la placa azul pierde su alimentación un instante (fuente apagada/prendida, falso contacto,
+// bajón por un servo trabado), el PCA9685 vuelve a arrancar DORMIDO y a otra frecuencia: ya no
+// saca pulsos aunque el Uno le siga mandando ángulos. revisaPCA() lo nota y lo reconfigura.
+uint16_t lastCnt[16];          // último valor de cada canal (4096 = sin pulso)
+uint8_t prescaleOK = 0;        // prescaler correcto (para 50 Hz) leído al configurar
+bool pcaPerdido = false;
+
+void pwmSet(uint8_t c, uint16_t v) {
+  lastCnt[c] = v;
+  pwm.setPWM(c, 0, v);
+}
+
+void configuraPCA() {
+  pwm.begin();
+  Wire.setWireTimeout(3000, true);  // si el PCA9685 se queda sin VCC a medio mensaje, el Uno no se cuelga
+  pwm.setOscillatorFrequency(27000000);
+  pwm.setPWMFreq(FREQUENCY);
+  prescaleOK = pwm.readPrescale();
+}
+
+void revisaPCA() {
+  Wire.beginTransmission(0x40);
+  bool responde = Wire.endTransmission() == 0;
+  if (!responde) {
+    if (!pcaPerdido) Serial.println(F("!! PCA9685 NO RESPONDE (se desconecto o perdio VCC). Esperando..."));
+    pcaPerdido = true;
+    return;
+  }
+  if (!pcaPerdido && pwm.readPrescale() == prescaleOK) return;  // todo bien
+  configuraPCA();
+  for (uint8_t c = 0; c < 16; c++) pwm.setPWM(c, 0, lastCnt[c]);  // cada servo a su último ángulo
+  pcaPerdido = false;
+  Serial.println(F("!! El PCA9685 se reinicio (perdio su alimentacion?): reconfigurado y servos restaurados"));
+}
+
 void setHand(float pct) {
   float a = HAND_OPEN_DEG + (HAND_CLOSED_DEG - HAND_OPEN_DEG) * pct / 100.0;
-  pwm.setPWM(HAND_CH, 0, angleToCounts(a));
+  pwmSet(HAND_CH, angleToCounts(a));
 }
 
 void resetFilter(int j) {
@@ -195,7 +231,7 @@ void prende(int j) {
 }
 
 void suelta(int c) {
-  pwm.setPWM(c, 0, 4096);  // sin pulso: el servo deja de hacer fuerza
+  pwmSet(c, 4096);  // sin pulso: el servo deja de hacer fuerza
   for (int j = 0; j < NJ; j++) if (CH[j] == c) on[j] = false;
   if (c == HAND_CH) { handOn = false; handTgt = handCur = 0; }
 }
@@ -303,7 +339,7 @@ void handleLine(char* s) {
       a = constrain(a, 0, 180);
       enterRemote();
       testMode = true;
-      pwm.setPWM(c, 0, angleToCounts(a));
+      pwmSet(c, angleToCounts(a));
       // Si es el canal de una articulación, anota dónde quedó (para que al salir de T no brinque)
       for (int j = 0; j < NJ; j++)
         if (CH[j] == c) { cur[j] = tgt[j] = INVERT[j] ? 180 - a : a; on[j] = true; }
@@ -327,12 +363,12 @@ void handleLine(char* s) {
   } else if (!strcmp(s, "HOME")) {
     enterRemote();
     testMode = false;
-    for (int j = 0; j < NJ; j++) { tgt[j] = clampJoint(j, HOME_POS[j]); prende(j); }
+    for (int j = 0; j < NJ; j++) if (HOME_POS[j] >= 0) { tgt[j] = clampJoint(j, HOME_POS[j]); prende(j); }
     handTgt = 0;
   } else if (!strcmp(s, "ESTIRA")) {
     enterRemote();
     testMode = false;
-    for (int j = 0; j < NJ; j++) { tgt[j] = clampJoint(j, STRETCH_POS[j]); prende(j); }
+    for (int j = 0; j < NJ; j++) if (STRETCH_POS[j] >= 0) { tgt[j] = clampJoint(j, STRETCH_POS[j]); prende(j); }
   } else if (!strcmp(s, "MAN")) {
     enterControl();
     Serial.println(F("Siguiendo al control"));
@@ -402,20 +438,20 @@ void setup() {
   Serial.begin(115200);
   pinMode(BTN_PIN, INPUT_PULLUP);
   for (int j = 0; j < NJ; j++) pinMode(POT[j], INPUT);
-  pwm.begin();
+  for (int c = 0; c < 16; c++) lastCnt[c] = 4096;
+  configuraPCA();
   Wire.beginTransmission(0x40);
   if (Wire.endTransmission() == 0) Serial.println(F("OK PCA9685 (0x40)"));
   else Serial.println(F("!! PCA9685 NO RESPONDE: revisa SDA->A4, SCL->A5, VCC->5V del Uno y GND"));
-  pwm.setOscillatorFrequency(27000000);
-  pwm.setPWMFreq(FREQUENCY);
-  for (int c = 0; c < 16; c++) pwm.setPWM(c, 0, 4096);  // todos apagados (sueltos)
+  for (int c = 0; c < 16; c++) pwmSet(c, 4096);  // todos apagados (sueltos)
 
   if (!HAY_CONTROL) {
     // Sin control: todos sueltos. Se prenden con la primera orden (J, T, HOME...)
-    for (int j = 0; j < NJ; j++) { on[j] = false; cur[j] = tgt[j] = HOME_POS[j]; }
+    for (int j = 0; j < NJ; j++) { on[j] = false; cur[j] = tgt[j] = HOME_POS[j] >= 0 ? HOME_POS[j] : 90; }
     handOn = false;
     remote = true;
     Serial.println(F("BRAZO ESP listo, SIN control: servos sueltos hasta que les mandes algo"));
+    Serial.println(F("(si ves esta linea sin haber reiniciado tu, el Uno se reinicio: USB o bajon de voltaje)"));
     return;
   }
   // Arranca en la pose del control y enciende los servos uno por uno en esa pose (sin brinco)
@@ -426,7 +462,7 @@ void setup() {
     potRef[j] = potA[j];
   }
   for (int j = 0; j < NJ; j++) {
-    pwm.setPWM(CH[j], 0, jointCounts(j, cur[j]));
+    pwmSet(CH[j], jointCounts(j, cur[j]));
     delay(250);
   }
   setHand(0);
@@ -446,6 +482,8 @@ void loop() {
   if (HAY_CONTROL)
     for (int j = 0; j < NJ; j++) potA[j] = adcToAngle(j, kalmanStep(kf[j], readADC(POT[j])));
   if (live && now - lastLive > 250) { lastLive = now; printP(); }
+  static uint32_t lastPCA = 0;
+  if (now - lastPCA > 1000) { lastPCA = now; revisaPCA(); }
   if (testMode) return;
 
   bool esp = espConectada();
@@ -481,7 +519,7 @@ void loop() {
   for (int j = 0; j < NJ; j++) {
     float step = (j == calJoint) ? 40 * dt : maxStep;
     cur[j] += constrain(tgt[j] - cur[j], -step, step);
-    if (on[j]) pwm.setPWM(CH[j], 0, jointCounts(j, cur[j]));
+    if (on[j]) pwmSet(CH[j], jointCounts(j, cur[j]));
   }
   if (!handOn) return;  // pinza suelta
 
@@ -489,7 +527,7 @@ void loop() {
   if (HAND_RELAX && handTgt == 0 && handCur <= 0.5) {
     if (!handOff) {
       if (handStillMs == 0) handStillMs = now;
-      if (now - handStillMs > 1000) { pwm.setPWM(HAND_CH, 0, 4096); handOff = true; }
+      if (now - handStillMs > 1000) { pwmSet(HAND_CH, 4096); handOff = true; }
       else setHand(handCur);
     }
   } else {

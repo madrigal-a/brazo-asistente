@@ -1,5 +1,35 @@
 # Estado y pendientes (26 nov 2026)
 
+## Ahora (26 nov, tarde)
+1. **Soldar el cable del codo** (se desoldó: por eso el codo fallaba de repente).
+2. **Grabar la respuesta "sí":** `py -3.12 pc/grabar.py si` (frase sugerida: "¡Sí! ¡Me encanta!").
+   Se usa cuando le preguntan "¿te gusta ...?": primero hace el gesto "sí" y luego lo dice.
+3. Probar la TUI: `py -3.12 pc/tom.py --port COM8`. Teclas 1 casa / 2 sí / 3 baile para probar sin
+   hablar; ahí se ve qué entendió Vosk y si coincidió con alguna respuesta (✓ / ✗).
+   El modelo de Vosk va en `pc/modelos/` (no está en git: se copia de la otra compu o se descarga).
+
+## Orden de encendido (para que funcione siempre)
+1. Fuente de servos APAGADA. Conecta el USB del Uno (le da 5 V al PCA9685) y la ESP.
+2. Prende la fuente (5.0 V, 3 A) con la mano en el switch.
+3. Lo primero que mandes: `inicio` (o `r` en la TUI). Si apagas y prendes la fuente, el Uno
+   reconfigura solo el PCA9685 y avisa `!! El PCA9685 se reinicio...`.
+4. Si "de repente no funciona": mira el Monitor Serie del Uno (COM6):
+   - `BRAZO ESP listo...` sin que lo reiniciaras → **el Uno se reinició** (USB o bajón): `r` en la TUI.
+   - `!! El PCA9685 se reinicio` → perdió su alimentación (falso contacto en VCC/GND de la placa azul).
+   - llegan `T canal ...` pero el servo no se mueve → fuente en CC o servo trabado.
+   - no llega nada → cable GPIO 40 → pin 0 o GND común.
+   Abrir COM6 (Monitor Serie, `--uno`) **reinicia el Uno** y suelta los servos.
+
+## Ahora: probar las poses y gestos (26 nov)
+Poses medidas con la TUI (base, hombro, codo; muñeca y pinza sueltas):
+**casa 90 80 90 · estirado 100 165 5**. Gestos en `pc/gestos.py` (y rutinas iguales en `Arm.h`):
+`inicio` (casa), `estirar`, `si` (estirado + codo 5↔10 ×3), `baile` (base 50↔110, hombro 160↔165 ×3).
+1. Sube el `BrazoESP` nuevo (HOME/ESTIRA con esos números).
+2. `py -3.12 pc/gestos.py inicio --port COM8` (primero siempre: el primer movimiento brinca),
+   luego `estirar`, `si`, `baile`.
+3. Por voz: `py -3.12 pc/tom.py --port COM8` y "hola", "baila", "estírate", "canta".
+4. Opcional: subir `TalkingBolita.ino` (rutinas nuevas de `Arm.h`, para `--brazo rutinas` y el PARO).
+
 ## Ahora: probar canal por canal con la TUI (26 nov, ya sin potes)
 Se quitaron los potes del control → en `BrazoESP.ino` está `HAY_CONTROL = false`: al encender los
 servos quedan **sueltos** y cada uno se prende con su primera orden. `OFF` / `OFF c` los suelta.
@@ -9,6 +39,11 @@ servos quedan **sueltos** y cada uno se prende con su primera orden. `OFF` / `OF
    La columna "Uno recibió" dice si la orden llegó: si llegó y el servo no se mueve, es el servo,
    su conector o la fuente (¿marca CC? 3 A no alcanzan para varios MG996R forzando a la vez).
 3. El reporte queda en `pc/resultados/prueba_canales_*.txt` (sirve para el reporte de la práctica).
+4. **Rango seguro de hombro y codo** (se trababan: les pedíamos ángulos que la mecánica no alcanza).
+   En la TUI arrancan en 90°. Muévelos de 5 en 5 hacia cada lado; en cuanto dejen de avanzar, zumben
+   o la fuente marque CC, regresa 5-10° y marca con `m` (mínimo) / `M` (máximo). Al salir imprime
+   `LIM_MIN` / `LIM_MAX` para pegar en `BrazoESP.ino`. Luego medir de nuevo `HOME_POS` (22° y 175° de
+   hombro y codo están en los topes).
 
 ## Antes: probar el UART ESP ↔ Uno con `firmware/BrazoESP`
 `BrazoManual.ino` (en `firmware/BrazoManual/`) ya mueve bien los 4 ejes con el control.

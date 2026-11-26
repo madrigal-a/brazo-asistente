@@ -23,46 +23,43 @@ import threading
 import time
 
 # ---------------------------------------------------------------- ajustes
-# canal del PCA9685 -> (nombre, ángulo de reposo). El reposo es donde el Uno deja cada servo al
-# encender (HOME_POS = 119 22 175 84), así el servo no brinca al empezar ni al terminar.
-# Los nombres son los que creemos (con "identificar" se comprueba cuál es cuál).
+# canal del PCA9685 -> (nombre, ángulo de reposo). El reposo es la CASA (26 nov, medida con la TUI):
+# base 90, hombro 80, codo 90. La muñeca (11) y la pinza (10) no se usan: se quedan sueltas.
+# Los ángulos son absolutos (mismo pulso = misma posición), así que se pueden repetir siempre;
+# solo el PRIMER movimiento después de encender brinca desde donde esté el brazo.
 SERVOS = {
-    14: ("base", 119),
-    13: ("hombro", 22),
-    12: ("codo", 175),
-    11: ("muneca", 84),
+    14: ("base", 90),
+    13: ("hombro", 80),
+    12: ("codo", 90),
 }
-# La pinza (canal 10) NO se usa: vibra contra su tope y se calienta. Cuando la calibren,
-# agrégala aquí, p. ej.  10: ("pinza", 20),
+CASA = {14: 90, 13: 80, 12: 90}
+ESTIRADO = {14: 100, 13: 165, 12: 5}
 
 VEL = 120  # velocidad normal en °/s (el T del Uno es instantáneo: aquí se hace en pasitos)
 PASO_S = 0.03  # cada cuánto se manda un pasito (30 ms)
-FIN = ""  # qué mandar al terminar un gesto ("" = nada; "HOME" = pose de casa, cuando esté calibrada)
+FIN = ""  # qué mandar al terminar un gesto ("" = nada: cada servo ya regresa solo a la casa)
 
 # Cada gesto es una lista de pasos:  ({canal: ángulo, ...}, espera_en_s [, velocidad °/s])
 # Los canales de un mismo paso se mueven al mismo tiempo. Después del último paso, cada servo
-# que se movió regresa solo a su reposo.
+# que se movió regresa solo a su reposo (la casa).
+_SI = [(ESTIRADO, 0.5, 80)] + [({12: 10}, 0.15, 60), ({12: 5}, 0.15, 60)] * 3  # estirado, codo 5<->10 x3
+_BAILE = [({14: 50, 13: 160}, 0.1, 90)] + [({14: 110, 13: 165}, 0.1), ({14: 50, 13: 160}, 0.1)] * 3
 GESTOS = {
-    "saludo": [({11: 55}, 0.1), ({11: 115}, 0.1), ({11: 55}, 0.1), ({11: 115}, 0.1)],  # muñeca de lado a lado
-    "si": [({11: 65}, 0.1), ({11: 100}, 0.1), ({11: 65}, 0.1)],  # muñeca arriba-abajo
-    "no": [({14: 100}, 0.1), ({14: 138}, 0.1), ({14: 100}, 0.1)],  # base izquierda-derecha
-    "baile": [
-        ({14: 100, 11: 60}, 0.1),
-        ({14: 138, 11: 110}, 0.1),
-        ({14: 100, 11: 60}, 0.1),
-        ({14: 138, 11: 110}, 0.1),
-    ],
-    "susto": [({13: 45}, 0.6, 250)],  # hombro rápido y regresa despacio
-    "estirar": [({13: 60, 12: 145}, 1.0, 80)],  # hombro y codo poquito
-    "agarrar": [({12: 150}, 0.8, 80)],  # codo baja y sube (sin pinza)
-    "soltar": [({11: 70}, 0.3)],
-    "inicio": [],  # solo manda FIN
-    # prueba: cada servo por separado, ~25° y regresa (base, hombro, codo, muñeca)
+    "inicio": [(CASA, 0.3, 60)],            # a la casa (también prende los 3 servos)
+    "estirar": [(ESTIRADO, 2.0, 80)],      # se estira, espera 2 s y regresa a la casa
+    "si": _SI,
+    "baile": _BAILE,                        # base 50<->110 y hombro 160<->165, 3 veces
+    # Los que siguen no los definimos todavía: usan los de arriba para que la voz no truene
+    "saludo": _SI,
+    "no": [({14: 70}, 0.1), ({14: 110}, 0.1), ({14: 70}, 0.1), ({14: 90}, 0.1)],  # base de lado a lado
+    "susto": [({14: 70}, 0.1), ({14: 110}, 0.1), ({14: 90}, 0.1)],
+    "agarrar": [],                          # sin pinza (está suelta)
+    "soltar": [],
+    # prueba: cada servo por separado, ~20° y regresa (base, hombro, codo)
     "prueba": [
-        ({14: 95}, 0.4), ({14: 119}, 0.6),
-        ({13: 45}, 0.4), ({13: 22}, 0.6),
-        ({12: 150}, 0.4), ({12: 175}, 0.6),
-        ({11: 110}, 0.4), ({11: 84}, 0.6),
+        ({14: 110}, 0.4), ({14: 90}, 0.6),
+        ({13: 100}, 0.4), ({13: 80}, 0.6),
+        ({12: 110}, 0.4), ({12: 90}, 0.6),
     ],
 }
 
@@ -82,15 +79,16 @@ class Gestos:
         self._hilo = None
         self._parar = threading.Event()
 
-    def hacer(self, nombre, esperar=False):
-        """Empieza un gesto (corta el anterior). Regresa False si no existe."""
+    def hacer(self, nombre, esperar=False, repetir=False):
+        """Empieza un gesto (corta el anterior). Regresa False si no existe.
+        repetir=True: lo repite sin fin hasta parar() (p. ej. bailar mientras dura la música)."""
         if nombre not in GESTOS:
             self.eco(f"   [brazo] no hay gesto '{nombre}' (hay: {', '.join(GESTOS)})")
             return False
         self.parar()
         self._parar.clear()
         self.eco(f"   [brazo] {nombre}")
-        self._hilo = threading.Thread(target=self._correr, args=(GESTOS[nombre],), daemon=True)
+        self._hilo = threading.Thread(target=self._correr, args=(GESTOS[nombre], repetir), daemon=True)
         self._hilo.start()
         if esperar:
             self._hilo.join()
@@ -128,17 +126,20 @@ class Gestos:
             if listo:
                 return True
 
-    def _correr(self, pasos):
+    def _correr(self, pasos, repetir=False):
         pos = {c: float(rep) for c, (_, rep) in SERVOS.items()}
         usados = set()
         try:
-            for p in pasos:
-                angs = {c: max(0, min(180, a)) for c, a in p[0].items() if c in SERVOS}
-                vel = p[2] if len(p) > 2 else self.vel
-                usados |= set(angs)
-                if not self._mover(pos, angs, vel):
-                    break
-                if self._parar.wait(p[1]):
+            cortado = False
+            while not cortado:
+                for p in pasos:
+                    angs = {c: max(0, min(180, a)) for c, a in p[0].items() if c in SERVOS}
+                    vel = p[2] if len(p) > 2 else self.vel
+                    usados |= set(angs)
+                    if not self._mover(pos, angs, vel) or self._parar.wait(p[1]):
+                        cortado = True
+                        break
+                if not repetir or not pasos:
                     break
             # siempre regresa al reposo (aunque lo hayan cortado), sin prisa
             self._mover(pos, {c: SERVOS[c][1] for c in usados}, min(self.vel, 150), forzar=True)

@@ -103,5 +103,33 @@ que recibe órdenes de la ESP.
   `?` agrega un 7.º número con los servos prendidos (bits).
 - Nueva TUI `pc/tui_brazo.py` para mover canal por canal en pasitos suaves, hacer barridos, ver si
   el Uno recibió cada orden y anotar OK / no responde / zumba (guarda reporte en `pc/resultados/`).
+- Prueba con la TUI (por la ESP): **base y muñeca responden perfecto**; hombro y codo se traban o
+  "se aplastan". Causa probable: la casa vieja (hombro 22°, codo 175°) está en los topes mecánicos,
+  el servo empuja contra el tope, jala ~2.5 A y la fuente (límite 3 A) entra en CC → los demás se
+  aflojan. La TUI ahora arranca hombro y codo en 90° y permite marcar el rango seguro (`m` / `M`),
+  que imprime como `LIM_MIN` / `LIM_MAX` para el firmware.
+- Con la TUI ya funciona todo. Poses medidas: **casa 90 80 90**, **estirado 100 165 5** (base,
+  hombro, codo); muñeca y pinza se quedan sueltas (`-1` en `HOME_POS` / `STRETCH_POS`). Los ángulos
+  son absolutos (mismo pulso = misma posición), así que se repiten sin importar dónde se encienda;
+  solo el primer movimiento brinca. Gestos: sí = estirado + codo 5↔10 ×3; baile = base 50↔110 y
+  hombro 160↔165 ×3. saludo = sí; no/susto = base 70↔110; agarrar/soltar no hacen nada (sin pinza).
+- "De repente no funciona" al desconectar/conectar o apagar la fuente. Causas probables: (1) el
+  PCA9685 pierde alimentación un instante y arranca dormido a otra frecuencia → ya no saca pulsos;
+  (2) el Uno se reinicia (USB o bajón) y suelta los servos. BrazoESP ahora revisa el prescaler del
+  PCA9685 cada 1 s y lo reconfigura y restaura los servos (`!! El PCA9685 se reinicio`); I2C con
+  timeout de 3 ms para no colgarse. TUI: tecla `r` reenvía los ángulos. Orden de encendido en PENDIENTES.
+- **Ya funciona** el brazo por la ESP (base, hombro, codo) con casa, estirado, sí y baile.
+- El baile ahora dura lo que la música: `Gestos.hacer(..., repetir=True)` repite el gesto hasta
+  `parar()` y luego regresa a casa; `tom.py` lo usa al cantar (canción de 13.7 s). "baila" /
+  "bailar" / "fiesta" ahora contesta y pone la canción con el baile (antes solo bailaba ~5 s sin música).
+- Lo intermitente del codo era **un cable desoldado**.
+- `tom.py` ahora es una **TUI**: configuración con teclas (voz, Function/automático, Kalman, repetir
+  o "no entendí", brazo, mover-antes-de-hablar, volumen), barra del micrófono con el umbral, lista
+  de frases con lo que entendió Vosk y si coincidió (✓/✗), y teclas 1/2/3 para casa/sí/baile.
+  `--sin-tui` deja el modo de antes. Los mensajes de librerías (numba) se filtran.
+- Nueva respuesta: "¿te gusta…?" / "¿te gustaría…?" → siempre **sí** (gesto `si` y luego la frase
+  grabada `si.wav`, que falta grabar). Por defecto el brazo se mueve **antes** de hablar (tecla m).
+  "baila" dice su frase y luego canta y baila. "casa" también manda a casa.
+- El repo de X: no tenía el modelo de Vosk (está en .gitignore): se copió a `pc/modelos/`.
 
 **Siguiente:** ver `PENDIENTES.md`.

@@ -16,11 +16,18 @@ Teclas:
   o / O             soltar este canal / soltar TODOS (sin pulso: dejan de hacer fuerza)
   v                 velocidad (30 / 60 / 120 / 200 °/s)
   k  n  z  x        anotar: OK / no responde / zumba-apretado / borrar nota
+  m  M              marcar el ángulo actual como MÍNIMO / MÁXIMO seguro (ya no lo pasa)   l  borrar límites
+  r                 reenviar: manda otra vez el ángulo de cada canal prendido (si el Uno se reinició
+                    o lo desconectaste, los servos quedan sueltos aunque aquí digan "prendido")
   g                 guardar el reporte en pc/resultados/      q  salir (también guarda)
 
 Cómo se mueve: manda "T canal ángulo" en pasitos de 30 ms (a la velocidad elegida), así el servo
 no da brincos. Ojo: la PRIMERA orden a un canal suelto sí brinca directo (el servo no dice dónde está),
-por eso cada canal arranca en el ángulo de casa (HOME_POS de BrazoESP.ino).
+por eso base, hombro y codo arrancan en la casa (90, 80, 90).
+
+Encontrar el rango seguro: mueve de 5 en 5 hacia un lado; en cuanto el servo deje de avanzar, zumbe
+o la fuente marque CC, regresa 5-10° y presiona m (o M del otro lado). Al salir imprime la línea
+LIM_MIN / LIM_MAX para pegar en BrazoESP.ino.
 """
 import argparse
 import collections
@@ -31,11 +38,12 @@ import sys
 import threading
 import time
 
-# (nombre, canal del PCA9685, ángulo inicial = casa en BrazoESP.ino)
+# (nombre, canal del PCA9685, ángulo de arranque = CASA medida el 26 nov: 90, 80, 90).
+# La casa vieja (hombro 22°, codo 175°) estaba en los topes y los servos se trababan.
 FILAS = [
-    ("Base", 14, 119),
-    ("Hombro", 13, 22),
-    ("Codo", 12, 175),
+    ("Base", 14, 90),
+    ("Hombro", 13, 80),
+    ("Codo", 12, 90),
     ("Muñeca", 11, 84),
     ("Pinza", 10, 10),
     ("Canal 15 (libre)", 15, 90),
@@ -108,6 +116,7 @@ class Conexion:
         self.lock = threading.Lock()
         self.modo = "simulado"
         self.dev = None
+        self.cerrado = False
         if args.simular:
             self.anota("(simulado: no se manda nada)")
         elif args.uno:
@@ -129,8 +138,11 @@ class Conexion:
 
     def manda(self, linea):
         with self.lock:
-            if self.dev:
-                self.dev.arm(linea)
+            if self.dev and not self.cerrado:
+                try:
+                    self.dev.arm(linea)
+                except Exception as e:
+                    self.anota(f"!! no se pudo mandar ({e})")
 
     def _leer_uno(self):
         ser = self.dev.ser
@@ -154,6 +166,8 @@ class Conexion:
         self.anota(l)
 
     def cierra(self):
+        with self.lock:
+            self.cerrado = True
         if self.dev:
             self.dev.close()
 
@@ -168,11 +182,13 @@ class Motor:
         self.metas = {c: [] for _, c, _ in FILAS}
         self.prendido = {c: False for _, c, _ in FILAS}
         self.vel = 60
+        self.lim = {c: [0, 180] for _, c, _ in FILAS}  # rango seguro marcado con m / M
         self.lock = threading.Lock()
         threading.Thread(target=self._correr, daemon=True).start()
 
     def ir(self, canal, angulo, barrido=False):
-        angulo = max(0, min(180, int(round(angulo))))
+        lo, hi = self.lim[canal]
+        angulo = max(lo, min(hi, int(round(angulo))))
         with self.lock:
             if not self.prendido[canal]:  # primera orden: brinca directo
                 self.prendido[canal] = True
@@ -195,6 +211,14 @@ class Motor:
                 self.metas[c] = []
                 self.prendido[c] = False
         self.con.manda(f"OFF {canal}" if canal is not None else "OFF")
+
+    def reenvia(self):
+        """Manda otra vez la posición de cada canal prendido (tras un reinicio del Uno)."""
+        with self.lock:
+            envios = [f"T {c} {round(a)}" for c, a in self.pos.items() if self.prendido[c]]
+        for e in envios:
+            self.con.manda(e)
+        return len(envios)
 
     def _correr(self):
         while True:
@@ -235,14 +259,17 @@ def dibuja(sel, motor, con, notas, numero, aviso):
         rec = con.confirmado.get(c)
         rec = f"{rec}°" if rec is not None else ("—" if con.modo.startswith("ESP") else "nada")
         nota = notas.get(c, "")
+        lo, hi = motor.lim[c]
+        if (lo, hi) != (0, 180):
+            nota = f"[{lo}–{hi}°] " + nota
         color = VERDE if nota == "OK" else (ROJO if nota else "")
         fila = f"{'►' if i == sel else ' '}  {nombre:<17}{c:>5}  {ang:<10}{barra(p)}  "
         if i == sel:
             fila = f"{INV}{fila}{FIN}"
         out.append(f"{fila}{estado}{rec:<12}{color}{nota}{FIN}\n")
     out.append(f"\n{GRIS}↑↓ canal  ←→ ±5°  [ ] ±1°  PgUp/PgDn ±15°  número+Enter ir  Espacio barrido\n"
-               f"o soltar canal  O soltar todos  v velocidad  k OK  n no responde  z zumba  x borrar  "
-               f"g guardar  q salir{FIN}\n")
+               f"o soltar canal  O soltar todos  v velocidad  k OK  n no responde  z zumba  x borrar\n"
+               f"m / M marcar mínimo / máximo seguro  l borrar límites  r reenviar todo  g guardar  q salir{FIN}\n")
     out.append(f"\nÁngulo: {AMARILLO}{numero}_{FIN}\n" if numero else "\n\n")
     out.append((f"{AMARILLO}{aviso}{FIN}" if aviso else "") + "\n")
     out.append(f"{NEGRITA}Lo que dice el Uno / la ESP:{FIN}\n")
@@ -259,8 +286,16 @@ def guarda(notas, motor):
         f.write(f"Prueba de canales — {datetime.datetime.now():%d/%m/%Y %H:%M}\n\n")
         for nombre, c, _ in FILAS:
             f.write(f"{nombre:<18} canal {c:>2}  último ángulo {motor.pos[c]:5.0f}°  "
-                    f"{notas.get(c, 'sin probar')}\n")
+                    f"rango seguro {motor.lim[c][0]}–{motor.lim[c][1]}°  {notas.get(c, 'sin probar')}\n")
+        f.write("\n" + lineas_lim(motor) + "\n")
     return ruta
+
+
+def lineas_lim(motor):
+    """Líneas para pegar en BrazoESP.ino (orden: base, hombro, codo, muñeca)."""
+    chs = [c for _, c, _ in FILAS[:4]]
+    return ("int LIM_MIN[NJ] = {" + ", ".join(str(motor.lim[c][0]) for c in chs) + "};\n"
+            "int LIM_MAX[NJ] = {" + ", ".join(str(motor.lim[c][1]) for c in chs) + "};")
 
 
 # ---------------------------------------------------------------- principal
@@ -271,7 +306,17 @@ def main():
     ap.add_argument("--simular", action="store_true", help="sin hardware")
     args = ap.parse_args()
 
-    con = Conexion(args)
+    try:
+        con = Conexion(args)
+    except Exception as e:  # puerto ocupado o no existe
+        puerto = args.uno or args.port or "?"
+        print(f"\nNo pude abrir {puerto}: {e}")
+        if "denegado" in str(e).lower() or "denied" in str(e).lower():
+            print(f"-> {puerto} está OCUPADO por otro programa: cierra el Monitor Serie del Arduino IDE\n"
+                  "   (o el IDE completo) y cualquier otra terminal que lo esté usando.")
+        else:
+            print("-> Ese puerto no existe. Mira cuáles hay con:  py -3.12 -m serial.tools.list_ports")
+        sys.exit(1)
     motor = Motor(con)
     sel, numero, aviso, notas = 0, "", "Los canales empiezan SUELTOS: muévelos y se prenden.", {}
     ultimo = 0
@@ -310,7 +355,7 @@ def main():
                 elif k == " ":
                     a = motor.destino(c)
                     for m in (a - 20, a + 20, a):
-                        motor.ir(c, max(0, min(180, m)), barrido=True)
+                        motor.ir(c, m, barrido=True)
                     aviso = f"Barrido del canal {c}: ¿se movió? anota k (OK), n (no responde) o z (zumba)"
                 elif k == "o":
                     motor.suelta(c)
@@ -325,6 +370,19 @@ def main():
                     sel = min(sel + 1, len(FILAS) - 1)
                 elif k == "x":
                     notas.pop(c, None)
+                elif k in ("m", "M"):
+                    a = round(motor.pos[c])
+                    lo, hi = motor.lim[c]
+                    if k == "m" and a < hi:
+                        motor.lim[c][0] = a
+                    elif k == "M" and a > lo:
+                        motor.lim[c][1] = a
+                    aviso = f"Canal {c}: rango seguro {motor.lim[c][0]}°–{motor.lim[c][1]}°"
+                elif k == "l":
+                    motor.lim[c] = [0, 180]
+                    aviso = f"Canal {c}: sin límites"
+                elif k == "r":
+                    aviso = f"Reenviados {motor.reenvia()} canales"
                 elif k == "g":
                     aviso = "Guardado en " + guarda(notas, motor)
                 elif k in ("q", "\x03"):
@@ -335,8 +393,11 @@ def main():
             pass
         finally:
             sys.stdout.write("\x1b[?25h\n")
-    ruta = guarda(notas, motor) if notas else None
+    hay_lim = any(l != [0, 180] for l in motor.lim.values())
+    ruta = guarda(notas, motor) if notas or hay_lim else None
     con.cierra()
+    if hay_lim:
+        print("Rango seguro, pega esto en BrazoESP.ino (sección CONFIGURACIÓN):\n" + lineas_lim(motor))
     print("Los servos se quedan como están (usa O antes de salir para soltarlos).")
     if ruta:
         print("Reporte:", ruta)

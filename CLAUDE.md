@@ -66,7 +66,7 @@ ESP → compu: líneas de texto: `PTT 1` / `PTT 0` / `PTT C` (Function: grabar /
 - Compilar antes de entregar:
   - Uno: `arduino-cli compile -b arduino:avr:uno firmware/BrazoESP` (y `firmware/BrazoManual`) (librería *Adafruit PWM Servo Driver Library* + *Adafruit BusIO*)
   - ESP32: `arduino-cli compile -b "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M" firmware/TalkingBolita` (librería *LovyanGFX*; incluir `Display.h` **antes** de `ESP_I2S.h`, choque de tipos en core 4.x)
-  - Python: `python pc/tom.py --simular` funciona sin hardware. En la compu de Alonso: `py -3.12` (tiene Python 2.7 también).
+  - Python: `python pc/tom.py --simular` funciona sin hardware (abre la TUI; `--sin-tui` para solo texto). En la compu de Alonso: `py -3.12` (tiene Python 2.7 también).
 - Palabras → respuestas: tabla `RESPUESTAS` en `pc/respuestas.py`; audios en `pc/respuestas/*.wav` (se graban con `pc/grabar.py`);
   modelo Vosk en `pc/modelos/` (no va al repo).
 - **Cuidado con el Arduino IDE:** si un `.ino` está abierto, el IDE vuelve a guardar su versión vieja
