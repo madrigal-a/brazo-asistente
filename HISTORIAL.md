@@ -94,5 +94,14 @@ que recibe órdenes de la ESP.
   control despacio (70 °/s). `T` en un canal de articulación actualiza dónde quedó (no brinca al salir).
   Compilado con avr-gcc: 19.8 KB flash (60 %), 815 B RAM (40 %).
 - `tom.py`: "mueve el codo a 120" ahora manda `V 60` + `J -1 -1 120 -1` (suave) en vez de `T` (brinco).
+- UART probado: la **ida ESP → Uno funciona** (el Uno contesta `S ...` al `?` de la ESP, visto en el
+  Monitor Serie). Falta la vuelta (pin 1 → divisor 1k/2k → GPIO 41). La ESP debe ir por el USB-C
+  "COM" (CH343, COM8); por el nativo sale como otro COM y no habla.
+- Con `T`, algunos servos se quedan "apretados" pero no se mueven. **Se quitaron los potes** del
+  control: `HAY_CONTROL = false` en BrazoESP (servos sueltos al encender, se prenden con la primera
+  orden; sin esto los pines al aire movían los servos al azar). Nuevo comando `OFF [canal]`;
+  `?` agrega un 7.º número con los servos prendidos (bits).
+- Nueva TUI `pc/tui_brazo.py` para mover canal por canal en pasitos suaves, hacer barridos, ver si
+  el Uno recibió cada orden y anotar OK / no responde / zumba (guarda reporte en `pc/resultados/`).
 
 **Siguiente:** ver `PENDIENTES.md`.

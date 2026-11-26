@@ -49,7 +49,9 @@ calibración, pruebas repetitivas, reporte).
 (volver al control) · `?` → `S b h c m mano modo` · `P` → `P b h c m (ADC ...)` ·
 `T canal ángulo` prueba un canal crudo (si es una articulación, el Uno anota dónde quedó) ·
 diagnóstico de BrazoManual: `D`, `REVISA`, `BUSCA j`, `CAL j a`, `PUNTO n`.
-Al encender copia al control (como BrazoManual). Cuando llega la ESP (cualquier línea; manda `?`
+`OFF [c]` suelta todos / un canal. **Ahora `HAY_CONTROL = false` (se quitaron los potes):** al
+encender todo queda suelto y cada servo se prende con su primera orden; probar con `pc/tui_brazo.py`.
+Con `HAY_CONTROL = true`: al encender copia al control (como BrazoManual). Cuando llega la ESP (cualquier línea; manda `?`
 cada 300 ms) se queda quieto y pasa a REMOTO; con la ESP conectada los potes y el botón se ignoran,
 salvo que llegue `MAN`. Sin ESP (2 s sin nada) y en REMOTO, mover un pote >20° regresa al control.
 `BrazoUno`/`BrazoUnoV2` son las versiones viejas (mapeo 240–800, codo mal); ya no se usan.

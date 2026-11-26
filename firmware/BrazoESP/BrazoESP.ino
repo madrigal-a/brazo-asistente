@@ -5,7 +5,12 @@
 //  + el protocolo de la ESP32-S3 por UART (pines 0/1 del Uno, 115200).
 //  También funciona SOLO: si nadie le manda nada, copia al control igual que BrazoManual.
 //
-//  Modos:
+//  ⚠ SIN CONTROL DE POTES (HAY_CONTROL = false, como está ahora): al encender TODOS los servos quedan
+//    SUELTOS (sin pulso). Cada uno se "prende" la primera vez que le mandas algo (J, T, HOME...) y
+//    brinca directo a ese ángulo: los servos no dicen dónde están. OFF los vuelve a soltar.
+//    Los potes, MAN y el botón no hacen nada. Para probar canales: python pc/tui_brazo.py
+//
+//  Modos (con HAY_CONTROL = true):
 //   CONTROL : el brazo copia al control de potes y el botón cierra la pinza (como BrazoManual).
 //   REMOTO  : obedece a la ESP (o a lo que escribas en el Monitor Serie).
 //
@@ -21,7 +26,9 @@
 //    V v          velocidad en modo remoto, grados/s (10-400). Al encender: 90
 //    HOME         posición de casa (recogido)      ESTIRA   brazo estirado
 //    MAN          regresar a seguir al control
-//    ?            estado → "S b h c m pinza modo"  (modo 0 = control, 1 = remoto). La ESP lo pide cada 300 ms
+//    OFF          suelta TODOS los servos (sin pulso, no hacen fuerza)    OFF c   suelta solo el canal c
+//    ?            estado → "S b h c m pinza modo prendidos"  (modo 0 = control, 1 = remoto;
+//                 prendidos: bits 0-3 base..muñeca, bit 4 pinza). La ESP lo pide cada 300 ms
 //    P            ángulos del control y ADC → "P b h c m (ADC ...)"
 //    T c a        PRUEBA: canal c (0-15) del PCA9685 al ángulo a (crudo, sin INVERT). Sale con J/HOME/MAN...
 //    D            monitor en vivo de los potes (lo detiene cualquier comando menos "?")
@@ -47,6 +54,7 @@ enum { BASE, SHOULDER, ELBOW, WRIST, NJ };
 const char* NAMES[NJ] = {"base", "hombro", "codo", "muneca"};
 
 // ===================== CONFIGURACIÓN (igual que BrazoManual.ino) =====================
+const bool HAY_CONTROL = false;             // false: se quitaron los potes del control (no los leas)
 // ⚠ Si cambias algo aquí, cámbialo igual en BrazoManual.ino (y anótalo en HISTORIAL.md).
 const uint8_t CH[NJ]  = {14, 13, 12, 11};   // canal PCA9685: base, hombro, codo, muñeca (probado con T)
 uint8_t       POT[NJ] = {A3, A2, A1, A0};   // pote de: base, hombro, codo, muñeca. BUSCA lo corrige.
@@ -88,6 +96,8 @@ bool testMode = false;                     // T: no mover nada más
 bool live = false;                         // D: monitor en vivo
 int calJoint = -1;                         // CAL: articulación congelada
 bool handOff = false;
+bool on[NJ];                               // articulación con pulso (false = suelta)
+bool handOn = true;                        // pinza con pulso
 uint32_t handStillMs = 0;
 uint32_t lastRx = 0;
 
@@ -160,6 +170,7 @@ void enterRemote() {
 }
 
 void enterControl() {
+  if (!HAY_CONTROL) { Serial.println(F("!! No hay control de potes (HAY_CONTROL = false)")); return; }
   remote = false;
   catchUp = true;      // alcanza al control despacio
   testMode = false;
@@ -171,7 +182,22 @@ void sendStatus() {
   Serial.print('S');
   for (int j = 0; j < NJ; j++) { Serial.print(' '); Serial.print((int)(cur[j] + 0.5)); }
   Serial.print(' '); Serial.print((int)(handCur + 0.5));
-  Serial.print(' '); Serial.println(remote ? 1 : 0);
+  Serial.print(' '); Serial.print(remote ? 1 : 0);
+  int m = 0;
+  for (int j = 0; j < NJ; j++) if (on[j]) m |= 1 << j;
+  if (handOn && !handOff) m |= 1 << 4;
+  Serial.print(' '); Serial.println(m);
+}
+
+// Prende una articulación que estaba suelta: brinca directo a su objetivo (no sabemos dónde está)
+void prende(int j) {
+  if (!on[j]) { on[j] = true; cur[j] = tgt[j]; }
+}
+
+void suelta(int c) {
+  pwm.setPWM(c, 0, 4096);  // sin pulso: el servo deja de hacer fuerza
+  for (int j = 0; j < NJ; j++) if (CH[j] == c) on[j] = false;
+  if (c == HAND_CH) { handOn = false; handTgt = handCur = 0; }
 }
 
 // "P b h c m  (ADC ... , pines A3 A2 A1 A0, boton suelto)"  — empieza con P: la ESP lo usa como "pong"
@@ -280,8 +306,8 @@ void handleLine(char* s) {
       pwm.setPWM(c, 0, angleToCounts(a));
       // Si es el canal de una articulación, anota dónde quedó (para que al salir de T no brinque)
       for (int j = 0; j < NJ; j++)
-        if (CH[j] == c) cur[j] = tgt[j] = INVERT[j] ? 180 - a : a;
-      if (c == HAND_CH) handOff = false;
+        if (CH[j] == c) { cur[j] = tgt[j] = INVERT[j] ? 180 - a : a; on[j] = true; }
+      if (c == HAND_CH) { handOff = false; handOn = true; }
       Serial.print(F("T canal ")); Serial.print(c); Serial.print(F(" -> ")); Serial.println(a);
     }
   } else if (s[0] == 'J' && (s[1] == ' ' || s[1] == 0)) {
@@ -290,26 +316,36 @@ void handleLine(char* s) {
     if (n > 0) {
       enterRemote();
       testMode = false;
-      for (int j = 0; j < n; j++) if (v[j] >= 0) tgt[j] = clampJoint(j, v[j]);
+      for (int j = 0; j < n; j++) if (v[j] >= 0) { tgt[j] = clampJoint(j, v[j]); prende(j); }
     }
   } else if (s[0] == 'H' && (s[1] == ' ' || (s[1] >= '0' && s[1] <= '9'))) {
     int p;
-    if (sscanf(s + 1, "%d", &p) == 1) { enterRemote(); testMode = false; handTgt = constrain(p, 0, 100); }
+    if (sscanf(s + 1, "%d", &p) == 1) { enterRemote(); testMode = false; handOn = true; handTgt = constrain(p, 0, 100); }
   } else if (s[0] == 'V' && (s[1] == ' ' || (s[1] >= '0' && s[1] <= '9'))) {
     int v;
     if (sscanf(s + 1, "%d", &v) == 1) speedDps = constrain(v, 10, 400);
   } else if (!strcmp(s, "HOME")) {
     enterRemote();
     testMode = false;
-    for (int j = 0; j < NJ; j++) tgt[j] = clampJoint(j, HOME_POS[j]);
+    for (int j = 0; j < NJ; j++) { tgt[j] = clampJoint(j, HOME_POS[j]); prende(j); }
     handTgt = 0;
   } else if (!strcmp(s, "ESTIRA")) {
     enterRemote();
     testMode = false;
-    for (int j = 0; j < NJ; j++) tgt[j] = clampJoint(j, STRETCH_POS[j]);
+    for (int j = 0; j < NJ; j++) { tgt[j] = clampJoint(j, STRETCH_POS[j]); prende(j); }
   } else if (!strcmp(s, "MAN")) {
     enterControl();
     Serial.println(F("Siguiendo al control"));
+  } else if (!strncmp(s, "OFF", 3)) {
+    int c;
+    if (sscanf(s + 3, "%d", &c) == 1 && c >= 0 && c <= 15) {
+      suelta(c);
+      Serial.print(F("OFF canal ")); Serial.println(c);
+    } else {
+      testMode = false;
+      for (int k = 0; k < 16; k++) suelta(k);
+      Serial.println(F("OFF todos (sueltos)"));
+    }
   } else if (!strcmp(s, "D")) {
     live = true;
   } else if (!strcmp(s, "REVISA")) {
@@ -320,7 +356,9 @@ void handleLine(char* s) {
     else Serial.println(F("Uso: BUSCA j  (0 base, 1 hombro, 2 codo, 3 muneca)"));
   } else if (!strncmp(s, "CAL", 3)) {
     int j, a;
-    if (sscanf(s + 3, "%d %d", &j, &a) == 2 && j >= 0 && j < NJ) {
+    if (!HAY_CONTROL) {
+      Serial.println(F("!! CAL necesita el control de potes (HAY_CONTROL = false)"));
+    } else if (sscanf(s + 3, "%d %d", &j, &a) == 2 && j >= 0 && j < NJ) {
       enterControl();
       catchUp = false;
       calJoint = j;
@@ -345,7 +383,7 @@ void handleLine(char* s) {
       printCal();
     }
   } else {
-    Serial.println(F("Comandos: J b h c m, H p, V v, HOME, ESTIRA, MAN, ?, P, T c a, D, REVISA, BUSCA j, CAL j a, PUNTO n"));
+    Serial.println(F("Comandos: J b h c m, H p, V v, HOME, ESTIRA, MAN, OFF [c], ?, P, T c a, D, REVISA, BUSCA j, CAL j a, PUNTO n"));
   }
 }
 
@@ -372,8 +410,17 @@ void setup() {
   pwm.setPWMFreq(FREQUENCY);
   for (int c = 0; c < 16; c++) pwm.setPWM(c, 0, 4096);  // todos apagados (sueltos)
 
+  if (!HAY_CONTROL) {
+    // Sin control: todos sueltos. Se prenden con la primera orden (J, T, HOME...)
+    for (int j = 0; j < NJ; j++) { on[j] = false; cur[j] = tgt[j] = HOME_POS[j]; }
+    handOn = false;
+    remote = true;
+    Serial.println(F("BRAZO ESP listo, SIN control: servos sueltos hasta que les mandes algo"));
+    return;
+  }
   // Arranca en la pose del control y enciende los servos uno por uno en esa pose (sin brinco)
   for (int j = 0; j < NJ; j++) {
+    on[j] = true;
     resetFilter(j);
     cur[j] = tgt[j] = clampJoint(j, potA[j]);
     potRef[j] = potA[j];
@@ -396,7 +443,8 @@ void loop() {
   float dt = (now - lastStep) / 1000.0;
   lastStep = now;
 
-  for (int j = 0; j < NJ; j++) potA[j] = adcToAngle(j, kalmanStep(kf[j], readADC(POT[j])));
+  if (HAY_CONTROL)
+    for (int j = 0; j < NJ; j++) potA[j] = adcToAngle(j, kalmanStep(kf[j], readADC(POT[j])));
   if (live && now - lastLive > 250) { lastLive = now; printP(); }
   if (testMode) return;
 
@@ -404,7 +452,7 @@ void loop() {
   if (esp && !espAntes) enterRemote();   // llegó la ESP: el brazo se queda quieto y la obedece
   espAntes = esp;
 
-  if (remote && !esp) {
+  if (remote && !esp && HAY_CONTROL) {
     // Sin ESP: si alguien mueve un pote, el control recupera el brazo
     for (int j = 0; j < NJ; j++)
       if (fabs(potA[j] - potRef[j]) > TAKEOVER_DEG) { enterControl(); break; }
@@ -427,14 +475,15 @@ void loop() {
     }
   } else {
     maxStep = speedDps * dt;
-    if (!esp && digitalRead(BTN_PIN) == LOW) handTgt = 100;  // sin ESP el botón puede cerrar la pinza
+    if (!esp && HAY_CONTROL && digitalRead(BTN_PIN) == LOW) handTgt = 100;  // sin ESP el botón puede cerrar la pinza
   }
 
   for (int j = 0; j < NJ; j++) {
     float step = (j == calJoint) ? 40 * dt : maxStep;
     cur[j] += constrain(tgt[j] - cur[j], -step, step);
-    pwm.setPWM(CH[j], 0, jointCounts(j, cur[j]));
+    if (on[j]) pwm.setPWM(CH[j], 0, jointCounts(j, cur[j]));
   }
+  if (!handOn) return;  // pinza suelta
 
   handCur += constrain(handTgt - handCur, -400 * dt, 400 * dt);
   if (HAND_RELAX && handTgt == 0 && handCur <= 0.5) {

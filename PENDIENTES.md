@@ -1,6 +1,16 @@
 # Estado y pendientes (26 nov 2026)
 
-## Ahora: probar el UART ESP ↔ Uno con `firmware/BrazoESP`
+## Ahora: probar canal por canal con la TUI (26 nov, ya sin potes)
+Se quitaron los potes del control → en `BrazoESP.ino` está `HAY_CONTROL = false`: al encender los
+servos quedan **sueltos** y cada uno se prende con su primera orden. `OFF` / `OFF c` los suelta.
+1. Sube el `BrazoESP` nuevo (quita el cable del pin 0 para subir).
+2. Cierra el Monitor Serie, quita el cable GPIO 40 → pin 0 y corre `py -3.12 pc/tui_brazo.py --uno COM6`
+   (o `--port COM8` para ir por la ESP). Con cada canal: Espacio = barrido, y anota k / n / z.
+   La columna "Uno recibió" dice si la orden llegó: si llegó y el servo no se mueve, es el servo,
+   su conector o la fuente (¿marca CC? 3 A no alcanzan para varios MG996R forzando a la vez).
+3. El reporte queda en `pc/resultados/prueba_canales_*.txt` (sirve para el reporte de la práctica).
+
+## Antes: probar el UART ESP ↔ Uno con `firmware/BrazoESP`
 `BrazoManual.ino` (en `firmware/BrazoManual/`) ya mueve bien los 4 ejes con el control.
 `BrazoESP.ino` es ese mismo código + las órdenes de la ESP. Probar en este orden:
 1. **Uno solo.** Quita el cable del pin 0, sube `BrazoESP`, fuente encendida. En el Monitor Serie
