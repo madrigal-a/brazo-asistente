@@ -66,7 +66,8 @@ def numeros(texto):
 
 
 def buscar(texto):
-    """(canal, ángulo) si el texto es una orden para un servo, si no None."""
+    """(canal, ángulo) si el texto es una orden para un servo, si no None.
+    "mueve la base" (sin número) -> (14, None): que se mueva un poco y regrese."""
     t = normalizar(texto)
     if re.search(r"\b" + PALABRA_SERVO + r"\b", t):
         n = numeros(t.split(re.search(r"\b" + PALABRA_SERVO + r"\b", t).group(0), 1)[1])
@@ -79,6 +80,8 @@ def buscar(texto):
             n = numeros(t[m.end():])
             if n:
                 return canal, max(0, min(180, n[0]))
+            if re.search(r"\b(mueve|muevete|mover|muevelo|muevela|menea)\b", t):
+                return canal, None
     return None
 
 

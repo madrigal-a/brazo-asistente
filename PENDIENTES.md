@@ -1,17 +1,23 @@
-# Estado y pendientes (26 nov 2026)
+# Estado y pendientes (27 nov 2026)
 
-## Ahora (26 nov, tarde)
-1. **Soldar el cable del codo** (se desoldó: por eso el codo fallaba de repente).
-2. **Grabar la respuesta "sí":** `py -3.12 pc/grabar.py si` (frase sugerida: "¡Sí! ¡Me encanta!").
-   Se usa cuando le preguntan "¿te gusta ...?": primero hace el gesto "sí" y luego lo dice.
-3. Probar la TUI: `py -3.12 pc/tom.py --port COM8`. Teclas 1 casa / 2 sí / 3 baile para probar sin
-   hablar; ahí se ve qué entendió Vosk y si coincidió con alguna respuesta (✓ / ✗).
-   El modelo de Vosk va en `pc/modelos/` (no está en git: se copia de la otra compu o se descarga).
+## Estado: PRESENTADO — todo funcionó ✅
+La bolita reconoce frases, contesta con voz y caras, y el brazo (base, hombro, codo) hace casa,
+estirado, sí, baile con la canción completa y movimientos por voz dentro de sus rangos.
+Comandos para correrlo: [COMANDOS.md](COMANDOS.md). Contexto para el reporte: [docs/CONTEXTO_REPORTE.md](docs/CONTEXTO_REPORTE.md).
+
+## Pendientes
+1. **Terminar el reporte** con `docs/CONTEXTO_REPORTE.md` (el borrador actual se hizo con la versión del 23 nov).
+2. Opcional / mejoras:
+   - Divisor 1k/2k para la vuelta Uno → ESP (pin 1 → GPIO 41): la ESP vería la posición real.
+   - Calibrar rangos de muñeca y pinza para volver a usarlas.
+   - Resistencias de 10 kΩ de cada señal de servo a GND (por si se prende la fuente con el Uno apagado).
+   - Subir `TalkingBolita.ino` con las rutinas nuevas de `Arm.h` (solo se usan con `--brazo rutinas` y en el PARO).
 
 ## Orden de encendido (para que funcione siempre)
 1. Fuente de servos APAGADA. Conecta el USB del Uno (le da 5 V al PCA9685) y la ESP.
 2. Prende la fuente (5.0 V, 3 A) con la mano en el switch.
-3. Lo primero que mandes: `inicio` (o `r` en la TUI). Si apagas y prendes la fuente, el Uno
+3. Al encender, el Uno ya va solo a la casa (base, codo y hombro, uno por uno). Nunca prendas
+   la fuente con el Uno apagado: el codo se queda forzando. Si apagas y prendes la fuente, el Uno
    reconfigura solo el PCA9685 y avisa `!! El PCA9685 se reinicio...`.
 4. Si "de repente no funciona": mira el Monitor Serie del Uno (COM6):
    - `BRAZO ESP listo...` sin que lo reiniciaras → **el Uno se reinició** (USB o bajón): `r` en la TUI.
@@ -20,96 +26,8 @@
    - no llega nada → cable GPIO 40 → pin 0 o GND común.
    Abrir COM6 (Monitor Serie, `--uno`) **reinicia el Uno** y suelta los servos.
 
-## Ahora: probar las poses y gestos (26 nov)
-Poses medidas con la TUI (base, hombro, codo; muñeca y pinza sueltas):
-**casa 90 80 90 · estirado 100 165 5**. Gestos en `pc/gestos.py` (y rutinas iguales en `Arm.h`):
-`inicio` (casa), `estirar`, `si` (estirado + codo 5↔10 ×3), `baile` (base 50↔110, hombro 160↔165 ×3).
-1. Sube el `BrazoESP` nuevo (HOME/ESTIRA con esos números).
-2. `py -3.12 pc/gestos.py inicio --port COM8` (primero siempre: el primer movimiento brinca),
-   luego `estirar`, `si`, `baile`.
-3. Por voz: `py -3.12 pc/tom.py --port COM8` y "hola", "baila", "estírate", "canta".
-4. Opcional: subir `TalkingBolita.ino` (rutinas nuevas de `Arm.h`, para `--brazo rutinas` y el PARO).
-
-## Ahora: probar canal por canal con la TUI (26 nov, ya sin potes)
-Se quitaron los potes del control → en `BrazoESP.ino` está `HAY_CONTROL = false`: al encender los
-servos quedan **sueltos** y cada uno se prende con su primera orden. `OFF` / `OFF c` los suelta.
-1. Sube el `BrazoESP` nuevo (quita el cable del pin 0 para subir).
-2. Cierra el Monitor Serie, quita el cable GPIO 40 → pin 0 y corre `py -3.12 pc/tui_brazo.py --uno COM6`
-   (o `--port COM8` para ir por la ESP). Con cada canal: Espacio = barrido, y anota k / n / z.
-   La columna "Uno recibió" dice si la orden llegó: si llegó y el servo no se mueve, es el servo,
-   su conector o la fuente (¿marca CC? 3 A no alcanzan para varios MG996R forzando a la vez).
-3. El reporte queda en `pc/resultados/prueba_canales_*.txt` (sirve para el reporte de la práctica).
-4. **Rango seguro de hombro y codo** (se trababan: les pedíamos ángulos que la mecánica no alcanza).
-   En la TUI arrancan en 90°. Muévelos de 5 en 5 hacia cada lado; en cuanto dejen de avanzar, zumben
-   o la fuente marque CC, regresa 5-10° y marca con `m` (mínimo) / `M` (máximo). Al salir imprime
-   `LIM_MIN` / `LIM_MAX` para pegar en `BrazoESP.ino`. Luego medir de nuevo `HOME_POS` (22° y 175° de
-   hombro y codo están en los topes).
-
-## Antes: probar el UART ESP ↔ Uno con `firmware/BrazoESP`
-`BrazoManual.ino` (en `firmware/BrazoManual/`) ya mueve bien los 4 ejes con el control.
-`BrazoESP.ino` es ese mismo código + las órdenes de la ESP. Probar en este orden:
-1. **Uno solo.** Quita el cable del pin 0, sube `BrazoESP`, fuente encendida. En el Monitor Serie
-   (115200, "Nueva línea"): debe copiar al control igual que BrazoManual. Luego `?` → `S ...`,
-   `V 60`, `J -1 -1 120 -1` (el codo va suave a 120°), `HOME`, `MAN` (regresa al control despacio).
-2. **Ida (ESP → Uno).** Conecta GPIO 40 → pin 0 y GND común. Al prender la ESP el brazo se queda
-   quieto (modo remoto). `py -3.12 pc/gestos.py --manual --port COM8` y prueba un canal.
-3. **Vuelta (Uno → ESP).** Pin 1 → divisor 1k/2k → GPIO 41. `py -3.12 pc/probar_uart.py --port COM8`:
-   debe decir que el Uno contestó y la cara sonríe.
-4. **Voz, motor por motor.** `py -3.12 pc/tom.py --port COM8` y di "mueve el codo a ciento veinte",
-   "la base a noventa"... (articulaciones → `J` a 60 °/s; "servo diez a veinte" → `T` crudo).
-5. Después: rutinas (baile + música, saludo...) con `J`/`HOME` en vez de `T` (casa ya se puede medir con `P`).
-
-## Cambio de planes (25 nov)
-- **La bocina de la ESP ya no suena** (probablemente el MAX98357). Ahora **el micrófono y las
-  bocinas son los de la compu** (o audífonos BT conectados a la compu). La ESP no puede usar
-  audífonos BT: la S3 solo tiene BLE, y los audífonos usan Bluetooth clásico.
-- **El brazo hace gestos sencillos** con `T canal ángulo` (`pc/gestos.py`), así funciona aunque el
-  control no esté calibrado.
-- **Volver a subir el sketch al Uno** (`BrazoUno` o `BrazoUnoV2`, el que usen): antes, el `?` que la
-  ESP manda cada 300 ms sacaba al servo del modo prueba y el `T` se deshacía.
-- **Volver a subir `TalkingBolita.ino`**: la boca ahora se mueve aunque el volumen de la ESP esté en 0.
-- Probar en orden: `python gestos.py saludo --uno COMx` (Uno solo) → `python gestos.py saludo`
-  (pasando por la ESP) → `python tom.py`.
-
-> Si usas Claude: abre este repo y dile *"lee CLAUDE.md, HISTORIAL.md y PENDIENTES.md y sigamos con el pendiente 1"*.
-
-## Lo que ya funciona
-- `BrazoUno.ino` sube y responde en el Monitor Serie (115200, "Nueva línea"): `?`, `P`, `T`, `J`, `HOME`...
-- Los potes se leen bien **con la fuente encendida** (sin fuente dan lecturas falsas).
-- Canales del PCA9685, comprobados con `T canal ángulo`:
-
-| Canal | Servo |
-|---|---|
-| 14 | base |
-| 13 | hombro |
-| 12 | codo |
-| 11 | muñeca |
-| 10 | pinza (solo vibra) |
-| 15 | nada |
-
-- Con el control: **base y hombro ya se mueven bien**.
-
-## Pendientes (en este orden)
-1. **Codo (canal 12).** Con el control, base, hombro y muñeca ya funcionan (25 nov); el codo no.
-   Separar si es el servo o el pote:
-   - Monitor Serie (cable del pin 0 quitado): `T 12 150`, `T 12 175`. ¿Se mueve?
-     - **No:** es el servo, su conector o la fuente. Probar el servo del codo en el canal 15 (vacío)
-       con `T 15 150`, o un servo que sí jale en el canal 12. Ver si la fuente marca CC (el codo carga peso).
-     - **Sí:** es el pote. `P`, mover solo el pote del codo, `P` otra vez: el 3.er número (A1) debe
-       cambiar. Ojo: el ADC del codo llegó a 142 en una punta (fuera de 240–800) → el ángulo se queda
-       en 180 en esa zona. Ajustar `POT_LO`/`POT_HI` o el mapeo del codo, y revisar `INVERT` del codo
-       (en `BrazoUnoV2` está en `true`, en `BrazoUno` en `false`).
-2. **Sentido de giro.** Si una articulación va al revés que el control → `true` en `INVERT[NJ]`
-   (base, hombro, codo, muñeca). En el repo están todos en `false`.
-3. **Pinza (canal 10).** Vibra con `T 10 60` / `T 10 120` (choca con su tope). Probar `T 10 0`,
-   `T 10 20`, `T 10 40` y el botón del control; ajustar `HAND_OPEN` / `HAND_CLOSED` (cuentas del
-   PCA9685; el código original usaba 90 y 180). **No dejarla vibrando**: se calienta.
-4. **Casa y estirado.** Volver a medir con `P` cuando los potes estén bien asignados y poner los
-   valores en `HOME_POS` / `STRETCH_POS` (ahora: casa 119 22 175 84, estirado 118 175 10 139).
-5. Ajustar los ángulos de las rutinas (saludo, baile...) en `firmware/TalkingBolita/Arm.h`.
-6. ESP32-S3: cargar `TalkingBolita.ino`, calibrar el touch y conectar al Uno (GPIO 40 → pin 0,
-   GPIO 41 ← pin 1 con divisor 1k/2k, GND común).
-7. Python: `pip install -r pc/requirements.txt`, `python pc/probar_esp.py --brazo`, `python pc/tom.py`.
+## Historial de pruebas
+Las listas de pruebas de cada día (UART, canal por canal, rangos, poses) están en `HISTORIAL.md`.
 
 ## Ojo con el Arduino IDE
 El IDE volvió a guardar versiones viejas encima de los archivos nuevos cuando estaban abiertos.

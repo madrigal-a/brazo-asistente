@@ -24,16 +24,18 @@ import time
 
 # ---------------------------------------------------------------- ajustes
 # canal del PCA9685 -> (nombre, ángulo de reposo). El reposo es la CASA (26 nov, medida con la TUI):
-# base 90, hombro 80, codo 90. La muñeca (11) y la pinza (10) no se usan: se quedan sueltas.
+# base 90, hombro 100, codo 90. La muñeca (11) y la pinza (10) no se usan: se quedan sueltas.
 # Los ángulos son absolutos (mismo pulso = misma posición), así que se pueden repetir siempre;
 # solo el PRIMER movimiento después de encender brinca desde donde esté el brazo.
 SERVOS = {
     14: ("base", 90),
-    13: ("hombro", 80),
+    13: ("hombro", 100),
     12: ("codo", 90),
 }
-CASA = {14: 90, 13: 80, 12: 90}
-ESTIRADO = {14: 100, 13: 165, 12: 5}
+CASA = {14: 90, 13: 100, 12: 90}
+ESTIRADO = {13: 170, 12: 10}  # la base se queda donde esté
+# Rangos seguros (igual que LIM_MIN / LIM_MAX de BrazoESP.ino): nunca se mandan ángulos fuera de aquí
+LIMITES = {14: (50, 140), 13: (100, 170), 12: (10, 90)}
 
 VEL = 120  # velocidad normal en °/s (el T del Uno es instantáneo: aquí se hace en pasitos)
 PASO_S = 0.03  # cada cuánto se manda un pasito (30 ms)
@@ -42,26 +44,36 @@ FIN = ""  # qué mandar al terminar un gesto ("" = nada: cada servo ya regresa s
 # Cada gesto es una lista de pasos:  ({canal: ángulo, ...}, espera_en_s [, velocidad °/s])
 # Los canales de un mismo paso se mueven al mismo tiempo. Después del último paso, cada servo
 # que se movió regresa solo a su reposo (la casa).
-_SI = [(ESTIRADO, 0.5, 80)] + [({12: 10}, 0.15, 60), ({12: 5}, 0.15, 60)] * 3  # estirado, codo 5<->10 x3
-_BAILE = [({14: 50, 13: 160}, 0.1, 90)] + [({14: 110, 13: 165}, 0.1), ({14: 50, 13: 160}, 0.1)] * 3
+_SI = [(ESTIRADO, 0.5, 80)] + [({12: 15}, 0.15, 60), ({12: 10}, 0.15, 60)] * 3  # estirado, codo 10<->15 x3
+_BAILE = [({14: 50, 13: 160}, 0.1, 90)] + [({14: 140, 13: 165}, 0.1), ({14: 50, 13: 160}, 0.1)] * 3  # base en todo su rango
 GESTOS = {
     "inicio": [(CASA, 0.3, 60)],            # a la casa (también prende los 3 servos)
     "estirar": [(ESTIRADO, 2.0, 80)],      # se estira, espera 2 s y regresa a la casa
     "si": _SI,
-    "baile": _BAILE,                        # base 50<->110 y hombro 160<->165, 3 veces
+    "baile": _BAILE,                        # base 50<->140 y hombro 160<->165, 3 veces
     # Los que siguen no los definimos todavía: usan los de arriba para que la voz no truene
     "saludo": _SI,
     "no": [({14: 70}, 0.1), ({14: 110}, 0.1), ({14: 70}, 0.1), ({14: 90}, 0.1)],  # base de lado a lado
     "susto": [({14: 70}, 0.1), ({14: 110}, 0.1), ({14: 90}, 0.1)],
     "agarrar": [],                          # sin pinza (está suelta)
     "soltar": [],
+    # "mueve la base / el hombro / el codo" (sin número): se mueve dentro de su rango y regresa
+    "mover_base": [({14: 130}, 0.3, 60), ({14: 60}, 0.3, 60)],
+    "mover_hombro": [({13: 150}, 0.5, 50)],
+    "mover_codo": [({12: 45}, 0.5, 50)],
     # prueba: cada servo por separado, ~20° y regresa (base, hombro, codo)
     "prueba": [
         ({14: 110}, 0.4), ({14: 90}, 0.6),
-        ({13: 100}, 0.4), ({13: 80}, 0.6),
-        ({12: 110}, 0.4), ({12: 90}, 0.6),
+        ({13: 120}, 0.4), ({13: 100}, 0.6),
+        ({12: 70}, 0.4), ({12: 90}, 0.6),
     ],
 }
+
+
+def recortar(canal, angulo):
+    """Ángulo dentro del rango seguro del canal (LIMITES); otros canales: 0-180."""
+    lo, hi = LIMITES.get(canal, (0, 180))
+    return int(max(lo, min(hi, round(angulo))))
 
 
 # ---------------------------------------------------------------- motor de gestos
@@ -78,6 +90,9 @@ class Gestos:
         self.eco = eco
         self._hilo = None
         self._parar = threading.Event()
+        # dónde creemos que está cada servo: el Uno arranca en la casa, y se va actualizando con
+        # cada gesto y con ir(). Así un gesto empieza desde donde quedó el brazo (sin brincos).
+        self.pos = {c: float(rep) for c, (_, rep) in SERVOS.items()}
 
     def hacer(self, nombre, esperar=False, repetir=False):
         """Empieza un gesto (corta el anterior). Regresa False si no existe.
@@ -93,6 +108,18 @@ class Gestos:
         if esperar:
             self._hilo.join()
         return True
+
+    def ir(self, canal, angulo, vel=60):
+        """Mueve un servo a un ángulo (recortado a su rango) en pasitos suaves y se queda ahí.
+        Regresa el ángulo al que va de verdad."""
+        a = recortar(canal, angulo)
+        self.parar()
+        self._parar.clear()
+        if canal not in self.pos:
+            self.pos[canal] = float(a)  # canal que no conocemos: brinca directo
+        self._hilo = threading.Thread(target=self._mover, args=(self.pos, {canal: a}, vel), daemon=True)
+        self._hilo.start()
+        return a
 
     def comando(self, canal, angulo):
         """Un solo T (para pruebas)."""
@@ -127,13 +154,13 @@ class Gestos:
                 return True
 
     def _correr(self, pasos, repetir=False):
-        pos = {c: float(rep) for c, (_, rep) in SERVOS.items()}
+        pos = self.pos  # empieza desde donde quedó el brazo
         usados = set()
         try:
             cortado = False
             while not cortado:
                 for p in pasos:
-                    angs = {c: max(0, min(180, a)) for c, a in p[0].items() if c in SERVOS}
+                    angs = {c: max(LIMITES[c][0], min(LIMITES[c][1], a)) for c, a in p[0].items() if c in SERVOS}
                     vel = p[2] if len(p) > 2 else self.vel
                     usados |= set(angs)
                     if not self._mover(pos, angs, vel) or self._parar.wait(p[1]):

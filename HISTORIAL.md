@@ -131,5 +131,26 @@ que recibe órdenes de la ESP.
   grabada `si.wav`, que falta grabar). Por defecto el brazo se mueve **antes** de hablar (tecla m).
   "baila" dice su frase y luego canta y baila. "casa" también manda a casa.
 - El repo de X: no tenía el modelo de Vosk (está en .gitignore): se copió a `pc/modelos/`.
+- Con solo la fuente (Uno sin corriente) el codo se queda forzado: sin VCC el PCA9685 no saca señal
+  y el servo lee ruido. Regla: **primero el Uno, luego la fuente** (opcional: 10 kΩ de señal a GND).
+- BrazoESP: `ARRANCA_EN_CASA = true` → al encender prende base, codo y hombro (en ese orden, 0.5 s
+  entre cada uno) directo en la casa 90 80 90; muñeca y pinza quedan sueltas. La TUI ya los toma
+  como prendidos en la casa (su primer movimiento es suave).
+- **Rangos medidos** (fuera de ellos chocan con el tope): base 50–140, hombro 100–170, codo 10–90.
+  Puestos en `LIM_MIN` / `LIM_MAX` del Uno (ahora también `T` los respeta), en `gestos.py` y en la TUI.
+- **Poses nuevas:** casa 90 100 90 · estirado (base igual) 170 10 · sí = estirado + codo 10↔15 ×3 ·
+  baile = base 50↔140 y hombro 160↔165. Igual en `Arm.h`.
+- Voz por articulación: "mueve la base / el hombro / el codo" sin número hace un movimiento dentro
+  de su rango y regresa (`mover_*` en gestos.py); con número ("el codo a ciento cincuenta") se
+  recorta al rango (→ 90°) y la TUI lo dice. Los gestos ahora recuerdan dónde quedó cada servo
+  (`Gestos.pos`, `Gestos.ir`): antes, después de mover la base por voz, el baile brincaba.
+- En "baila" el brazo empieza a bailar antes de la frase y sigue durante toda la canción.
+
+## 27 nov 2026 — presentación
+- **Se presentó y todo funcionó** (voz, caras, casa, estirado, sí, baile con la canción, movimientos por voz).
+- Se grabó `si.wav` ("¡Sí! ¡Me encanta!").
+- `COMANDOS.md` con todos los comandos para correrlo; `docs/CONTEXTO_REPORTE.md` con todo lo necesario
+  para el reporte (qué cambió desde el 23 nov, datos medidos, problemas y soluciones).
+- README actualizado (BrazoESP, rangos, gestos, TUI). Todo subido a GitHub.
 
 **Siguiente:** ver `PENDIENTES.md`.

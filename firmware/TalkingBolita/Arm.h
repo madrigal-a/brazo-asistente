@@ -22,19 +22,19 @@ static const KeyFrame R_INICIO[] = {
 static const KeyFrame R_ESTIRAR[] = {
   {ESTIRADO, 0, 0, 0, -1, 60, 2500},
 };
-// Casa: 90 80 90 · estirado: 100 165 5 (HOME_POS / STRETCH_POS del Uno). Muñeca y pinza sueltas.
-static const KeyFrame R_SALUDO[] = {   // = sí: se estira y mueve el codo 5 <-> 10 tres veces
+// Casa: 90 100 90 · estirado: (base igual) 170 10 (HOME_POS / STRETCH_POS del Uno). Muñeca y pinza sueltas.
+static const KeyFrame R_SALUDO[] = {   // = sí: se estira y mueve el codo 10 <-> 15 tres veces
   {ESTIRADO, 0, 0, 0, -1, 80, 2200},
-  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 250},
-  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 250},
-  {-1, -1, 10, -1, -1, 60, 250}, {-1, -1, 5, -1, -1, 60, 400},
+  {-1, -1, 15, -1, -1, 60, 250}, {-1, -1, 10, -1, -1, 60, 250},
+  {-1, -1, 15, -1, -1, 60, 250}, {-1, -1, 10, -1, -1, 60, 250},
+  {-1, -1, 15, -1, -1, 60, 250}, {-1, -1, 10, -1, -1, 60, 400},
   {CASA, 0, 0, 0, -1, 60, 2000},
 };
-static const KeyFrame R_BAILE[] = {    // base 50 <-> 110, hombro 160 <-> 165, tres veces
+static const KeyFrame R_BAILE[] = {    // base 50 <-> 140, hombro 160 <-> 165, tres veces
   {50, 160, -1, -1, -1, 90, 1200},
-  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
-  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
-  {110, 165, -1, -1, -1, 120, 600}, {50, 160, -1, -1, -1, 120, 600},
+  {140, 165, -1, -1, -1, 120, 750}, {50, 160, -1, -1, -1, 120, 750},
+  {140, 165, -1, -1, -1, 120, 750}, {50, 160, -1, -1, -1, 120, 750},
+  {140, 165, -1, -1, -1, 120, 750}, {50, 160, -1, -1, -1, 120, 750},
   {CASA, 0, 0, 0, -1, 60, 1800},
 };
 static const KeyFrame R_AGARRAR[] = {   // sin pinza todavía: no hace nada

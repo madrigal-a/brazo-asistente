@@ -44,6 +44,11 @@ calibración, pruebas repetitivas, reporte).
 - Brazo: mientras no se calibre el control, las reacciones son gestos con `T canal ángulo`
   (`pc/gestos.py`). En el Uno, `?` y `P` no sacan del modo prueba (la ESP manda `?` cada 300 ms).
 
+## Poses y rangos (26 nov)
+Rangos (no pasar: chocan con el tope): **base 50–140, hombro 100–170, codo 10–90**; muñeca y pinza sueltas.
+Casa **90 100 90**, estirado **(base igual) 170 10**. Están en `BrazoESP.ino` (LIM_*, HOME_POS,
+STRETCH_POS), `pc/gestos.py` (LIMITES, CASA, ESTIRADO), `pc/tui_brazo.py` (RANGOS) y `Arm.h`: cambiarlos juntos.
+
 ## Protocolo Uno (texto, 115200, una línea por comando) — `firmware/BrazoESP`
 `J b h c m` ángulos (−1 = no cambiar) · `H 0-100` pinza · `V °/s` · `HOME` · `ESTIRA` · `MAN`
 (volver al control) · `?` → `S b h c m mano modo` · `P` → `P b h c m (ADC ...)` ·

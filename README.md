@@ -1,6 +1,8 @@
 # Brazo asistente — Talking Bolita 🟡🦾
 
-> **Estado actual y pendientes:** ver [PENDIENTES.md](PENDIENTES.md).
+> **Estado:** presentado y funcionando (27 nov 2026). Comandos para correrlo: [COMANDOS.md](COMANDOS.md).
+> Contexto completo para el reporte: [docs/CONTEXTO_REPORTE.md](docs/CONTEXTO_REPORTE.md) ·
+> historial de decisiones: [HISTORIAL.md](HISTORIAL.md) · pendientes: [PENDIENTES.md](PENDIENTES.md).
 
 Una mascota tipo Talking Tom que además controla un brazo robótico: le hablas, limpia tu voz con
 un **filtro de Kalman**, hace caras según cómo hablas, te repite con voz chistosa y el brazo
@@ -8,14 +10,16 @@ reacciona. Mantienes el botón **Function** para hablarle; con **Mode** abres un
 
 ```
  Micrófono de la compu ──► Python: Kalman + efectos + caras ──USB──► ESP32-S3: pantalla + bocina + 2 botones
-                                                                          │ serial (TX/RX)
+                                                                          │ UART 115200 (GPIO 40 → pin 0)
                                                                           ▼
-                                                     Arduino Uno + PCA9685 ──► 5 servos del brazo (+ potenciómetros)
+                                                     Arduino Uno + PCA9685 ──► servos: base, hombro, codo
 ```
 
 - **`firmware/TalkingBolita/`**: sketch de Arduino para la ESP32-S3
-- **`firmware/BrazoUno/`**: sketch para el Arduino Uno del brazo
-- **`pc/`**: programas de Python
+- **`firmware/BrazoESP/`**: sketch del Arduino Uno del brazo (el que se usa): órdenes de la ESP, rangos, casa
+- **`firmware/BrazoManual/`**: sketch del Uno para usar el brazo solo con el control de potenciómetros
+- `firmware/BrazoUno/`, `firmware/BrazoUnoV2/`: versiones viejas (ya no se usan)
+- **`pc/`**: programas de Python (`tom.py` = la bolita con TUI, `tui_brazo.py` = probar el brazo canal por canal)
 - **`docs/caras.png`**: vista previa de las 8 expresiones
 
 ![caras](docs/caras.png)
@@ -81,7 +85,9 @@ En la placa YD-ESP32-S3 el GPIO 14 es el tercer pin de la fila de arriba, junto 
 - El resto del brazo se conecta como en la Figura 1 de la práctica (PCA9685 en A4/A5, potes en
   A0–A3, botón en el pin 13). Los servos con su propia fuente de 5 V, 3 A.
   En nuestro brazo los servos quedaron un canal abajo de la práctica: base 14, hombro 13,
-  codo 12, muñeca 11, pinza 10 (ya está así en `BrazoUno.ino`).
+  codo 12, muñeca 11, pinza 10 (ya está así en `BrazoESP.ino`).
+- **Orden de encendido:** primero el Uno (USB) y la ESP, **después** la fuente de servos. Con la
+  fuente prendida y el Uno apagado, el PCA9685 no tiene VCC, la señal queda al aire y el codo se fuerza.
 
 ### Bocina
 Cable multifilar de 22–24 AWG, o un jumper con el conector cortado y soldado. Ninguna terminal
@@ -107,44 +113,35 @@ Al arrancar debe sonar un *pío* y la bolita sonríe.
 - Si la pantalla dice "Sin PSRAM" → revisa el paso de PSRAM.
 
 ### Arduino Uno del brazo
-1. Gestor de librerías → **Adafruit PWM Servo Driver Library**.
-2. Abre `firmware/BrazoUno/BrazoUno.ino`, placa **Arduino Uno**, sube (con el pin 0 desconectado).
-3. Funciona igual que la práctica (potenciómetros + botón de la mano). Además, en el
-   **Monitor Serie a 115200 con "Nueva línea"** puedes escribir:
+1. Gestor de librerías → **Adafruit PWM Servo Driver Library** (instala también *Adafruit BusIO*).
+2. Abre `firmware/BrazoESP/BrazoESP.ino`, placa **Arduino Uno**, sube (con el cable del pin 0 desconectado).
+3. En el **Monitor Serie a 115200 con "Nueva línea"** debe decir
+   `BRAZO ESP listo, SIN control: en CASA (base, hombro, codo)`. Ahí también puedes escribir:
 
 | Comando | Qué hace |
 |---|---|
-| `J 90 120 60 90` | base, hombro, codo, muñeca en grados (−1 = no cambiar) |
-| `H 100` / `H 0` | cerrar / abrir mano |
+| `J 90 120 60 -1` | base, hombro, codo, muñeca en grados (−1 = no cambiar), suave a la velocidad `V` |
 | `V 60` | velocidad en °/s |
-| `HOME` | posición de casa (recogido) |
-| `ESTIRA` | brazo estirado |
-| `MAN` | regresar a potenciómetros |
-| `?` | estado |
-| `P` | ángulos del control + ADC crudo (para calibrar) |
-| `T 14 60` | prueba: mueve solo ese canal del PCA9685 (salir con `MAN`) |
+| `HOME` / `ESTIRA` | casa (90 100 90) / estirado (base igual, 170, 10) |
+| `T 14 60` | prueba: mueve solo ese canal del PCA9685 (respeta los rangos si es una articulación) |
+| `OFF` / `OFF 12` | soltar todos los servos / solo uno (dejan de hacer fuerza) |
+| `?` | estado: `S base hombro codo muñeca pinza modo prendidos` |
+| `H 100` / `H 0` | cerrar / abrir pinza (no se usa: está suelta) |
 
-**Al encender**, el brazo va a la posición de **casa** (recogido) y se queda ahí. Esa es su
-referencia: los servos no avisan en qué ángulo están, así que el programa siempre parte de una
-posición conocida. Enciende los servos con el brazo cerca de la casa para que no dé un brinco.
-En cuanto mueves el control (el bracito de potenciómetros) más de 20°, el brazo lo empieza a
-copiar, primero despacio hasta alcanzarlo. Si llega una orden de la ESP, obedece a la ESP.
+**Al encender** el Uno lleva la base, el codo y el hombro a la **casa**, uno por uno (0.5 s entre
+cada uno). Los servos no dicen en qué ángulo están, así que la casa es la referencia: el primer
+movimiento brinca desde donde haya quedado el brazo. La muñeca y la pinza quedan sueltas.
 
-**Con la ESP conectada, el control queda bloqueado:** la ESP le pregunta `?` al Uno cada 300 ms y,
-mientras eso pase, el Uno **ignora los potenciómetros y el botón** (así el ruido de los potes no
-mueve los servos). Si deja de recibir algo durante 2 s (ESP apagada o desconectada), el control
-vuelve a funcionar al mover un pote más de 20°. Escribir en el Monitor Serie también lo bloquea 2 s.
+**Rangos seguros** (fuera de ellos el servo choca con el tope, jala ~2.5 A y se queda forzando):
+**base 50–140°, hombro 100–170°, codo 10–90°**. Están en `LIM_MIN` / `LIM_MAX` y ningún comando los pasa.
 
-**Calibración (para el reporte):**
-1. Con la fuente **encendida** (los potes toman de ahí su voltaje) y los servos desconectados de
-   la placa azul, pon el control en la pose recogida, escribe `P` en el Monitor Serie y copia los 4 ángulos que responde (`P base hombro codo muñeca`)
-   en `HOME_POS`.
-2. Haz lo mismo con el brazo estirado → `STRETCH_POS`.
-3. Mueve cada articulación a sus extremos sin que choque y anota los ángulos en `LIM_MIN` / `LIM_MAX`.
-4. Los ángulos de las rutinas (saludar, bailar...) están en `firmware/TalkingBolita/Arm.h`.
+**Protecciones:** si el PCA9685 se reinicia (perdió su alimentación un instante), el Uno lo nota cada
+segundo, lo reconfigura y regresa cada servo a su último ángulo (`!! El PCA9685 se reinicio`). El I2C
+tiene timeout para que el Uno no se cuelgue.
 
-Los potenciómetros también tienen un **filtro de Kalman 1D** (`kalmanStep`) que quita el temblor
-de los servos: puedes graficar la lectura cruda contra la filtrada para el reporte.
+Se quitaron los potenciómetros del control (`HAY_CONTROL = false`). Con el control puesto, usa
+`firmware/BrazoManual/` (o `HAY_CONTROL = true`): ahí está la lectura del ADC sin "fantasma", la
+calibración de 2 puntos por pote (`CAL j a` + `PUNTO n`) y el filtro de Kalman 1D de cada pote.
 
 ### Pantalla y botones
 - **Cara:** mantén **Function** mientras hablas (sale un micrófono rojo arriba a la derecha) y
@@ -183,47 +180,45 @@ volumen de la compu lo bajas en Windows y el de la ESP con `--volumen` (default 
 python tom.py --mics              # lista dispositivos: luego --mic N (entrada) / --bocina N (salida)
 ```
 
-### Brazo: gestos sencillos (`pc/gestos.py`)
-Mientras el control de potenciómetros no esté calibrado, las reacciones del brazo son **gestos
-sencillos**: mueven uno o dos servos con el comando de prueba `T canal ángulo`, en pasitos, y los
-regresan a su reposo (la pose de casa); al final se manda `HOME`. La pinza (canal 10) no se usa.
+### Probar el brazo canal por canal (`pc/tui_brazo.py`)
+```bash
+python tui_brazo.py --port COM8     # por la ESP32
+python tui_brazo.py --uno COM6      # directo al Uno por USB (cierra el Monitor Serie, quita el cable del pin 0)
+```
+↑↓ canal · ←→ ±5° · número + Enter = ir a ese ángulo · Espacio = barrido · `m`/`M` marcar mínimo /
+máximo seguro · `r` reenviar todo · `o`/`O` soltar · `k`/`n`/`z` anotar OK / no responde / zumba ·
+`q` salir (guarda un reporte en `pc/resultados/` e imprime `LIM_MIN`/`LIM_MAX` para el firmware).
 
-| Gesto | Qué mueve |
+### Brazo: gestos (`pc/gestos.py`)
+Cada gesto mueve los servos en pasitos de 30 ms con `T canal ángulo`, nunca fuera de su rango, y al
+final regresa a la casa. Los gestos recuerdan dónde quedó cada servo (no brincan al empezar).
+
+| Gesto | Qué hace |
 |---|---|
-| saludo | muñeca (11) de lado a lado |
-| si | muñeca (11) arriba-abajo |
-| no | base (14) izquierda-derecha |
-| baile | base (14) + muñeca (11) |
-| susto | hombro (13) rápido y regresa |
-| estirar | hombro (13) + codo (12) |
-| agarrar | codo (12) |
-| soltar | muñeca (11) |
+| inicio | casa: base 90, hombro 100, codo 90 |
+| estirar | hombro 170, codo 10 (la base no se mueve), espera 2 s y regresa |
+| si / saludo | estirado + codo 10 ↔ 15 tres veces |
+| baile | base 50 ↔ 140 y hombro 160 ↔ 165; con la canción se repite lo que dura la música |
+| no / susto | base de lado a lado (70 ↔ 110) |
+| mover_base / mover_hombro / mover_codo | esa articulación se mueve dentro de su rango y regresa |
+| prueba | cada servo por separado, ~20° y regresa |
 
 ```bash
-python gestos.py                  # lista gestos y servos
-python gestos.py saludo           # lo manda por la ESP32 (ESP -> UART -> Uno)
-python gestos.py saludo --uno COM7  # directo al Uno por su USB, sin la ESP32
-python gestos.py --t 11 60        # un solo comando T
-python gestos.py prueba --port COM8   # cada servo UNO POR UNO, ~25° y regresa
-python gestos.py --manual --port COM8 # teclado: "11 60", "+", "-", "h" (casa), "q" (salir)
-python tom.py --brazo rutinas     # usar las rutinas completas de Arm.h
-python tom.py --brazo no          # no mover el brazo
+python gestos.py                       # lista gestos y servos
+python gestos.py baile --port COM8     # por la ESP32 (ESP -> UART -> Uno)
+python gestos.py baile --uno COM6      # directo al Uno por su USB, sin la ESP32
+python gestos.py --manual --port COM8  # teclado: "14 90", "+", "-", "q"
 ```
-Los ángulos se cambian en `SERVOS` y `GESTOS` al inicio de `gestos.py`.
+Los ángulos se cambian en `CASA`, `ESTIRADO`, `LIMITES` y `GESTOS` al inicio de `gestos.py`
+(y los mismos en `BrazoESP.ino`, `tui_brazo.py` y `Arm.h`).
 
-**Probar un servo con la voz** (`pc/servo_voz.py`, necesita Vosk). Mantén Function y di, por ejemplo:
+**Mover el brazo con la voz** (`pc/servo_voz.py`):
 
-| Dices | Manda |
+| Dices | Hace |
 |---|---|
-| "prueba el servo diez y muévelo a veinte grados" | `T 10 20` |
-| "canal once a sesenta" | `T 11 60` |
-| "mueve el codo a ciento veinte" | `T 12 120` |
-| "la muñeca a sesenta grados" / "pinza a veinte" / "base a cien" / "hombro a cuarenta y cinco" | `T 11 60` / `T 10 20` / `T 14 100` / `T 13 45` |
-
-El servo se queda en ese ángulo; di **"quieto"** o **"inicio"** para mandar el brazo a casa
-(`HOME`). Con la pinza ten cuidado: si vibra, mándala a otro ángulo o a casa enseguida.
-En la terminal sale lo que entendió Vosk (`-> servo 10 a 20°`); si escribe "servo" de otra
-forma, agrégala a `PALABRA_SERVO` en `servo_voz.py`.
+| "mueve la base" / "mueve el hombro" / "mueve el codo" | se mueve dentro de su rango y regresa |
+| "mueve la base a noventa", "el codo a cuarenta" | va a ese ángulo (recortado a su rango) y se queda |
+| "prueba el servo diez a veinte grados" | `T 10 20` (prueba cruda de un canal) |
 
 ### Sin hardware (para avanzar hoy mismo)
 ```bash
@@ -242,9 +237,15 @@ python probar_esp.py --brazo      # además prueba los gestos del brazo (sí, no
 python tom.py --puertos           # si no encuentra la placa, para ver el nombre del puerto
 ```
 
-### Talking Bolita
+### Talking Bolita (TUI)
+`tom.py` abre una pantalla en la terminal con la configuración (se cambia con teclas), la barra
+del micrófono con el umbral de voz y la lista de frases: qué entendió Vosk y si coincidió con una
+respuesta (✓ / ✗). Teclas: **1** casa · **2** sí · **3** baile · `v` voz · `p` botón Function /
+automático · `k` Kalman · `r` repetir / "no entendí" · `m` mover el brazo antes de hablar ·
+`b` brazo · `+`/`-` volumen · `q` salir. `--sin-tui` deja solo texto.
 ```bash
-python tom.py                     # o: python tom.py --port COM5
+python tom.py --port COM8         # (sin --port la busca sola)
+python tom.py --port COM8 --audio pc --auto   # voz por la compu y escucha sola
 python tom.py --voz ardilla
 python tom.py --guardar frases    # guarda original / kalman / efecto de cada frase (para el reporte)
 python tom.py --sin-kalman        # para comparar
@@ -288,18 +289,22 @@ En el menú escribes el número de una frase (o `f` = la primera que falta) y ah
 Se guardan en `pc/respuestas/<nombre>.wav`; con varias tomas (`hola_2.wav`...) elige una al azar.
 Mientras falte grabar una, te repite y avisa en la terminal.
 
-| Dices | Contesta (sugerido) | Cara | Brazo |
+Se usa la **primera** línea que coincide (por eso "¿te gusta bailar?" es un sí y no un baile).
+Por defecto el brazo se mueve **antes** de que la bolita hable (tecla `m`).
+
+| Dices | Contesta | Cara | Brazo |
 |---|---|---|---|
-| canta, cántame, canción, música | *la canción de la bolita* | feliz | baila |
-| cómo te llamas, quién eres | "¡Soy la Bolita, y tengo un brazo robot!" | feliz | saluda |
+| te gusta, te gustaría, te encanta (lo que sea) | "¡Sí! ¡Me encanta!" | feliz | sí |
+| canta, cántame, canción, música | *la canción de la bolita* | feliz | baila toda la canción |
+| cómo te llamas, quién eres | "¡Soy la Bolita, y tengo un brazo robot!" | feliz | sí |
 | cómo estás, qué tal | "¡Súper bien! ¿Y tú cómo estás?" | feliz | sí |
-| hola, buenos días, qué onda | "¡Hola, hola! ¿Qué hacemos hoy?" | feliz | saluda |
-| adiós, nos vemos | "¡Adiós! ¡Vuelve pronto!" | feliz | saluda |
-| baila, fiesta | "¡A bailar se ha dicho!" | feliz | baila |
+| hola, buenos días, qué onda | "¡Hola, hola! ¿Qué hacemos hoy?" | feliz | sí |
+| adiós, nos vemos | "¡Adiós! ¡Vuelve pronto!" | feliz | sí |
+| baila, bailar, fiesta | "¡A bailar se ha dicho!" + la canción | feliz | baila desde antes de hablar y toda la canción |
 | estírate | "¡Uuuf, qué buena estirada!" | sorpresa | se estira |
-| agarra, toma, recoge / suelta | "¡Lo tengo!" / "Ahí te va." | escuchando / neutral | agarra / suelta |
-| quieto, alto, inicio | "Ok, me quedo quieto." | neutral | inicio |
-| bu, susto, cuidado | "¡Aaay! ¡Qué susto!" | sorpresa | se echa para atrás |
+| agarra, toma, recoge / suelta | "¡Lo tengo!" / "Ahí te va." | escuchando / neutral | (nada: pinza suelta) |
+| quieto, alto, inicio, casa | "Ok, me quedo quieto." | neutral | casa |
+| bu, susto, cuidado | "¡Aaay! ¡Qué susto!" | sorpresa | base de lado a lado |
 | duérmete, buenas noches | "Buenas noches... zzz" | dormido | inicio |
 | tonto, feo / enójate | "Oye... eso no fue bonito." / "¡Grrr!" | triste / enojado | dice que no |
 | te quiero, amigo, gracias | "¡Aww, gracias! Tú también." | feliz | sí |
@@ -344,8 +349,11 @@ modulación en anillo a 60 Hz (robot) y retardos con retroalimentación (eco).
 
 | Problema | Solución |
 |---|---|
-| No suena | Revisa VIN del MAX98357 a 5V y BCLK/LRC/DIN. Debe sonar el *pío* al arrancar. |
+| No suena | Revisa VIN del MAX98357 a 3V3 y BCLK/LRC/DIN. Debe sonar el *pío* al arrancar. |
 | "Uno: sin respuesta" en la pantalla | Revisa el divisor en GPIO 41 y que las tierras estén unidas |
+| El codo (o un servo) se queda forzando al prender | Prende primero el Uno y después la fuente; revisa que no le pidas un ángulo fuera de su rango |
+| "De repente" deja de moverse | Monitor Serie del Uno: `BRAZO ESP listo` = se reinició el Uno (tecla `r` en la TUI); `!! El PCA9685 se reinicio` = falso contacto en la placa azul; llegan `T canal` y no se mueve = fuente en CC o cable desoldado |
+| `could not open port ... Acceso denegado` | Otro programa tiene abierto el COM (Monitor Serie del IDE): ciérralo |
 | El brazo no obedece a la ESP | `python probar_uart.py --port COM8 --uno COM6`: dice si falla la ida (GPIO 40 → pin 0, GND) o la vuelta (pin 1 → divisor → GPIO 41). Si el Uno contesta, la bolita sonríe |
 | Presionas Function y `tom.py` no escucha | La bolita está en **Pausa** o en el menú: Mode → "Reanudar", o mantén Mode para volver a la cara (`tom.py` lo avisa) |
 | Suena distorsionado o con chasquidos | Baja el volumen (`--volumen 100`; el default es 130). Con `musica.py --niveles` ves el máximo limpio |

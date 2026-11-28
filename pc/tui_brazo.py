@@ -23,7 +23,7 @@ Teclas:
 
 Cómo se mueve: manda "T canal ángulo" en pasitos de 30 ms (a la velocidad elegida), así el servo
 no da brincos. Ojo: la PRIMERA orden a un canal suelto sí brinca directo (el servo no dice dónde está),
-por eso base, hombro y codo arrancan en la casa (90, 80, 90).
+por eso base, hombro y codo arrancan en la casa (90, 100, 90).
 
 Encontrar el rango seguro: mueve de 5 en 5 hacia un lado; en cuanto el servo deje de avanzar, zumbe
 o la fuente marque CC, regresa 5-10° y presiona m (o M del otro lado). Al salir imprime la línea
@@ -38,16 +38,18 @@ import sys
 import threading
 import time
 
-# (nombre, canal del PCA9685, ángulo de arranque = CASA medida el 26 nov: 90, 80, 90).
+# (nombre, canal del PCA9685, ángulo de arranque = CASA medida el 26 nov: 90, 100, 90).
 # La casa vieja (hombro 22°, codo 175°) estaba en los topes y los servos se trababan.
 FILAS = [
     ("Base", 14, 90),
-    ("Hombro", 13, 80),
+    ("Hombro", 13, 100),
     ("Codo", 12, 90),
     ("Muñeca", 11, 84),
     ("Pinza", 10, 10),
     ("Canal 15 (libre)", 15, 90),
 ]
+# rangos seguros medidos el 26 nov (igual que LIM_MIN / LIM_MAX de BrazoESP.ino)
+RANGOS = {14: (50, 140), 13: (100, 170), 12: (10, 90)}
 VELOCIDADES = [30, 60, 120, 200]
 PASO_S = 0.03
 NOTAS = {"k": "OK", "n": "NO RESPONDE", "z": "ZUMBA / APRETADO"}
@@ -180,9 +182,10 @@ class Motor:
         self.con = con
         self.pos = {c: a for _, c, a in FILAS}
         self.metas = {c: [] for _, c, _ in FILAS}
-        self.prendido = {c: False for _, c, _ in FILAS}
+        # el Uno (BrazoESP, ARRANCA_EN_CASA) ya deja base, hombro y codo prendidos en la casa
+        self.prendido = {c: c in (14, 13, 12) for _, c, _ in FILAS}
         self.vel = 60
-        self.lim = {c: [0, 180] for _, c, _ in FILAS}  # rango seguro marcado con m / M
+        self.lim = {c: list(RANGOS.get(c, (0, 180))) for _, c, _ in FILAS}  # rango seguro (m / M lo cambia)
         self.lock = threading.Lock()
         threading.Thread(target=self._correr, daemon=True).start()
 
@@ -260,7 +263,7 @@ def dibuja(sel, motor, con, notas, numero, aviso):
         rec = f"{rec}°" if rec is not None else ("—" if con.modo.startswith("ESP") else "nada")
         nota = notas.get(c, "")
         lo, hi = motor.lim[c]
-        if (lo, hi) != (0, 180):
+        if (lo, hi) != RANGOS.get(c, (0, 180)):
             nota = f"[{lo}–{hi}°] " + nota
         color = VERDE if nota == "OK" else (ROJO if nota else "")
         fila = f"{'►' if i == sel else ' '}  {nombre:<17}{c:>5}  {ang:<10}{barra(p)}  "
@@ -379,8 +382,8 @@ def main():
                         motor.lim[c][1] = a
                     aviso = f"Canal {c}: rango seguro {motor.lim[c][0]}°–{motor.lim[c][1]}°"
                 elif k == "l":
-                    motor.lim[c] = [0, 180]
-                    aviso = f"Canal {c}: sin límites"
+                    motor.lim[c] = list(RANGOS.get(c, (0, 180)))
+                    aviso = f"Canal {c}: límites de fábrica {motor.lim[c][0]}°–{motor.lim[c][1]}°"
                 elif k == "r":
                     aviso = f"Reenviados {motor.reenvia()} canales"
                 elif k == "g":
@@ -393,7 +396,7 @@ def main():
             pass
         finally:
             sys.stdout.write("\x1b[?25h\n")
-    hay_lim = any(l != [0, 180] for l in motor.lim.values())
+    hay_lim = any(tuple(l) != RANGOS.get(c, (0, 180)) for c, l in motor.lim.items())
     ruta = guarda(notas, motor) if notas or hay_lim else None
     con.cierra()
     if hay_lim:

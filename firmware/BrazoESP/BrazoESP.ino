@@ -5,9 +5,10 @@
 //  + el protocolo de la ESP32-S3 por UART (pines 0/1 del Uno, 115200).
 //  También funciona SOLO: si nadie le manda nada, copia al control igual que BrazoManual.
 //
-//  ⚠ SIN CONTROL DE POTES (HAY_CONTROL = false, como está ahora): al encender TODOS los servos quedan
-//    SUELTOS (sin pulso). Cada uno se "prende" la primera vez que le mandas algo (J, T, HOME...) y
-//    brinca directo a ese ángulo: los servos no dicen dónde están. OFF los vuelve a soltar.
+//  ⚠ SIN CONTROL DE POTES (HAY_CONTROL = false, como está ahora): al encender va a la CASA
+//    (HOME_POS: base, hombro y codo), prendiendo un servo a la vez (ARRANCA_EN_CASA). Da un brinco:
+//    los servos no dicen dónde están. Lo que tenga -1 en HOME_POS (muñeca) y la pinza quedan SUELTOS
+//    y se prenden con su primera orden (J, T...). OFF los vuelve a soltar.
 //    Los potes, MAN y el botón no hacen nada. Para probar canales: python pc/tui_brazo.py
 //
 //  Modos (con HAY_CONTROL = true):
@@ -55,6 +56,8 @@ const char* NAMES[NJ] = {"base", "hombro", "codo", "muneca"};
 
 // ===================== CONFIGURACIÓN (igual que BrazoManual.ino) =====================
 const bool HAY_CONTROL = false;             // false: se quitaron los potes del control (no los leas)
+const bool ARRANCA_EN_CASA = true;          // al encender ir a HOME_POS (false = todo suelto)
+const uint16_t PAUSA_ARRANQUE_MS = 500;     // pausa entre prender un servo y el siguiente
 // ⚠ Si cambias algo aquí, cámbialo igual en BrazoManual.ino (y anótalo en HISTORIAL.md).
 const uint8_t CH[NJ]  = {14, 13, 12, 11};   // canal PCA9685: base, hombro, codo, muñeca (probado con T)
 uint8_t       POT[NJ] = {A3, A2, A1, A0};   // pote de: base, hombro, codo, muñeca. BUSCA lo corrige.
@@ -73,15 +76,17 @@ int CAL_ADC1[NJ] = {660, 660, 142, 537};
 int CAL_ANG2[NJ] = {135, 135, 10,  139};
 int CAL_ADC2[NJ] = {380, 380, 779, 367};
 
-int LIM_MIN[NJ] = {0,   0,   0,   0};      // límites de seguridad en grados
-int LIM_MAX[NJ] = {180, 180, 180, 180};
+// Rangos medidos el 26 nov (fuera de ellos el servo choca con el tope y se queda forzando).
+// Ningún comando (J, T, HOME...) los puede pasar.  Orden: base, hombro, codo, muñeca.
+int LIM_MIN[NJ] = {50,  100, 10, 0};       // límites de seguridad en grados
+int LIM_MAX[NJ] = {140, 170, 90, 180};
 const float MAX_DPS = 300;                 // velocidad máxima siguiendo al control (°/s)
 const float CATCHUP_DPS = 70;              // velocidad al regresar al control (MAN / sin ESP)
 const float DEADBAND = 1.0;                // no mover si el cambio es menor (quita zumbido)
 
 // Poses (b h c m), medidas con la TUI el 26 nov. -1 = no tocar esa articulación (se queda suelta).
-int HOME_POS[NJ]    = {90,  80,  90, -1};    // CASA
-int STRETCH_POS[NJ] = {100, 165, 5,  -1};    // ESTIRADO
+int HOME_POS[NJ]    = {90, 100, 90, -1};     // CASA
+int STRETCH_POS[NJ] = {-1, 170, 10, -1};     // ESTIRADO (la base se queda donde esté)
 
 const uint32_t ESP_TIMEOUT_MS = 2000;      // sin recibir nada en este tiempo = ESP desconectada
 const int TAKEOVER_DEG = 20;               // sin ESP: mover un pote esto regresa a CONTROL
@@ -337,6 +342,12 @@ void handleLine(char* s) {
     int c, a;
     if (sscanf(s + 1, "%d %d", &c, &a) == 2 && c >= 0 && c <= 15) {
       a = constrain(a, 0, 180);
+      // Si es una articulación, tampoco T puede pasar sus límites (LIM_MIN / LIM_MAX)
+      for (int j = 0; j < NJ; j++)
+        if (CH[j] == c) {
+          int aj = clampJoint(j, INVERT[j] ? 180 - a : a);
+          a = INVERT[j] ? 180 - aj : aj;
+        }
       enterRemote();
       testMode = true;
       pwmSet(c, angleToCounts(a));
@@ -446,11 +457,23 @@ void setup() {
   for (int c = 0; c < 16; c++) pwmSet(c, 4096);  // todos apagados (sueltos)
 
   if (!HAY_CONTROL) {
-    // Sin control: todos sueltos. Se prenden con la primera orden (J, T, HOME...)
+    // Sin control: cada servo de la casa se prende ahí, uno por uno (los demás quedan sueltos)
     for (int j = 0; j < NJ; j++) { on[j] = false; cur[j] = tgt[j] = HOME_POS[j] >= 0 ? HOME_POS[j] : 90; }
     handOn = false;
+    if (ARRANCA_EN_CASA) {
+      // orden: base, codo, hombro (el hombro carga todo el brazo: va al último, con el codo ya acomodado)
+      const uint8_t orden[NJ] = {BASE, ELBOW, SHOULDER, WRIST};
+      for (int k = 0; k < NJ; k++) {
+        int j = orden[k];
+        if (HOME_POS[j] < 0) continue;
+        on[j] = true;
+        pwmSet(CH[j], jointCounts(j, cur[j]));
+        delay(PAUSA_ARRANQUE_MS);
+      }
+    }
     remote = true;
-    Serial.println(F("BRAZO ESP listo, SIN control: servos sueltos hasta que les mandes algo"));
+    Serial.println(ARRANCA_EN_CASA ? F("BRAZO ESP listo, SIN control: en CASA (base, hombro, codo)")
+                                   : F("BRAZO ESP listo, SIN control: servos sueltos hasta que les mandes algo"));
     Serial.println(F("(si ves esta linea sin haber reiniciado tu, el Uno se reinicio: USB o bajon de voltaje)"));
     return;
   }

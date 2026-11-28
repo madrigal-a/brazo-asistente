@@ -41,7 +41,7 @@ import sounddevice as sd
 import dsp
 import respuestas
 import servo_voz
-from gestos import Gestos, UnoDirecto
+from gestos import Gestos, UnoDirecto, recortar
 from cancion import cancion_bolita
 from bolita import ANGRY, HAPPY, LISTEN, MOOD_NAMES, NEUTRAL, SAD, SLEEPY, SURPRISED, Bolita, list_ports
 
@@ -319,23 +319,39 @@ def main():
     JUNTAS = {14: 0, 13: 1, 12: 2, 11: 3}
     VEL_VOZ = 60  # °/s al mover una articulación por voz (suave)
 
+    NOMBRE_GESTO = {14: "mover_base", 13: "mover_hombro", 12: "mover_codo"}
+
     def servo(canal, angulo):
-        """Orden por voz: "mueve el codo a 120" -> J -1 -1 120 -1 (suave, a VEL_VOZ °/s).
-        Un canal que no es articulación (pinza 10, 15...) se manda con T (prueba cruda, instantáneo)."""
+        """Orden por voz: "mueve el codo a 120" -> el codo va suave a 120° (recortado a su rango).
+        "mueve la base" (angulo None) -> se mueve dentro de su rango y regresa a la casa.
+        Regresa el texto de lo que hizo (para la TUI)."""
+        if state["brazo"] == "no":
+            print(f"   [brazo] (apagado) canal {canal} -> {angulo}")
+            return "brazo apagado (b)"
+        if angulo is None:
+            if canal in NOMBRE_GESTO:
+                brazo(NOMBRE_GESTO[canal])
+                return f"se mueve y regresa ({NOMBRE_GESTO[canal]})"
+            return "di a qué ángulo (ej. 'a noventa')"
+        real = recortar(canal, angulo)
+        nota = "" if real == angulo else f"  (pediste {angulo}°: {'máximo' if real < angulo else 'mínimo'} {real}°)"
+        if state["gestos"] and canal in NOMBRE_GESTO:  # pasitos suaves; los gestos saben dónde quedó
+            state["gestos"].ir(canal, real, VEL_VOZ)
+            print(f"   [brazo] canal {canal} -> {real}°{nota}")
+            return f"servo {canal} a {real}°{nota}"
+        angulo = real
         if canal in JUNTAS:
             v = [-1] * 4
             v[JUNTAS[canal]] = angulo
             cmds = [f"V {VEL_VOZ}", "J " + " ".join(map(str, v))]
         else:
             cmds = [f"T {canal} {angulo}"]
-        if state["brazo"] == "no":
-            print(f"   [brazo] (apagado) {cmds[-1]}")
-            return
         if state["gestos"]:
             state["gestos"].parar()
         for c in cmds:
             (uno.arm if uno else bol.arm)(c)
         print(f"   [brazo] {cmds[-1]}   (se queda ahí)")
+        return f"servo {canal} a {angulo}°{nota}"
 
     def brazo(rutina, repetir=False, esperar=False):
         """Mueve el brazo según el modo elegido. esperar=True: regresa cuando termina el gesto."""
@@ -474,13 +490,19 @@ def main():
         while not q.empty():  # descarta lo que oyó el micrófono mientras sonaba la bocina
             q.get_nowait()
 
-    def cantar():
+    def cantar(frase=None):
+        """Baila mientras dura todo: primero arranca el brazo, luego (si hay) la frase
+        ("¡A bailar se ha dicho!") y la canción; al terminar la canción regresa a la casa."""
         state["cantar"] = False
         state["estado"] = "cantando"
         print("🎵 cantando")
         bol.mood(HAPPY, 1.0)
-        brazo("baile", repetir=True)  # baila todo lo que dura la canción
-        esperar_audio(bol.play(dsp.to_int16(cancion_bolita()), stop=lambda: state["ptt"]))
+        brazo("baile", repetir=True)  # el brazo empieza ANTES de que conteste
+        if frase is not None:
+            time.sleep(0.4)  # que se vea que ya se mueve
+            esperar_audio(bol.play(dsp.to_int16(frase), stop=lambda: state["ptt"]))
+        if not state["ptt"]:
+            esperar_audio(bol.play(dsp.to_int16(cancion_bolita()), stop=lambda: state["ptt"]))
         if state["gestos"]:
             state["gestos"].parar()  # termina el baile y regresa a la casa
         bol.mood(NEUTRAL)
@@ -538,9 +560,8 @@ def main():
                 h = respuestas.buscar(texto)
                 anota(n_frase, texto + " (tecla)", True, f"→ {h[0] or h[3]}  brazo: {h[3]}")
                 if state["cantar"]:
-                    if contestar is not None:  # "¡A bailar se ha dicho!" y luego la canción
-                        hablar(dsp.voice_effect(contestar, state["voz"]), cara, inten, HAPPY)
-                    cantar()
+                    # baila, dice "¡A bailar se ha dicho!" y luego la canción (bailando todo el tiempo)
+                    cantar(None if contestar is None else dsp.voice_effect(contestar, state["voz"]))
                 elif contestar is not None:
                     hablar(dsp.voice_effect(contestar, state["voz"]), cara, inten, despues)
                 state["estado"] = "esperando"
@@ -636,8 +657,7 @@ def main():
                 text = words.recognize(audio)  # Vosk entiende mejor el audio original que el filtrado
                 orden = servo_voz.buscar(text)
                 if orden:  # "mueve el codo a ciento veinte": mueve ese servo y no habla
-                    anota(n_frase, text, True, f"→ servo {orden[0]} a {orden[1]}°")
-                    servo(*orden)
+                    anota(n_frase, text, True, "→ " + servo(*orden))
                     bol.mood(HAPPY, 0.8, 1.5)
                     state["estado"] = "esperando"
                     continue
@@ -675,9 +695,8 @@ def main():
                 sf.write(base + "_3_efecto.wav", out, FS)
 
             if state["cantar"]:  # le dijiste "canta" o "baila": en lugar de repetirte, canta y baila
-                if contestar is not None:  # "¡A bailar se ha dicho!" y luego la canción
-                    hablar(out, talk_mood, talk_int, HAPPY)
-                cantar()
+                # baila, dice "¡A bailar se ha dicho!" y luego la canción (bailando todo el tiempo)
+                cantar(out if contestar is not None else None)
                 continue
             hablar(out, talk_mood, talk_int, after_mood)
 
